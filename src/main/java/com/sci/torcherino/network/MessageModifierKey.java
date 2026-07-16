@@ -31,7 +31,7 @@ public class MessageModifierKey implements IMessage, IMessageHandler<MessageModi
 	public MessageModifierKey onMessage(MessageModifierKey msg, MessageContext ctx)
 	{
 		EntityPlayer player = ctx.getServerHandler().player;
-		if(Torcherino.keyStates.get(player) == null || Torcherino.keyStates.get(player).booleanValue() != msg.pressed) Torcherino.keyStates.put(player, new Boolean(msg.pressed));
+		Torcherino.keyStates.put(player.getUniqueID(), Boolean.valueOf(msg.pressed));
 		return null;
 	}
 }

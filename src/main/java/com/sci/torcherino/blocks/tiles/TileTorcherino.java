@@ -1,11 +1,7 @@
 package com.sci.torcherino.blocks.tiles;
 
-import java.util.Random;
-
-import com.sci.torcherino.Torcherino;
-import com.sci.torcherino.TorcherinoRegistry;
-
-import net.minecraft.block.Block;
+import com.sci.torcherino.acceleration.AccelerationService;
+import com.sci.torcherino.acceleration.TorchSnapshot;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.network.NetworkManager;
@@ -15,185 +11,149 @@ import net.minecraft.util.ITickable;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.text.TextComponentString;
 import net.minecraft.world.World;
-import net.minecraftforge.fluids.BlockFluidBase;
 
-public class TileTorcherino extends TileEntity implements ITickable
-{
-    private static final String[] MODES = new String[]{"Stopped", "Area: 3x3x3", "Area: 5x3x5", "Area: 7x3x7", "Area: 9x3x9"};
-	private static final int SPEEDS = 4;
+public class TileTorcherino extends TileEntity implements ITickable {
+    private static final String[] MODES = new String[]{
+        "Stopped",
+        "Area: 3x3x3",
+        "Area: 5x3x5",
+        "Area: 7x3x7",
+        "Area: 9x3x9"
+    };
+    private static final int SPEEDS = 4;
+
     private boolean poweredByRedstone;
     private byte speed;
     private byte mode;
-    private byte cachedMode;
-    private Random rand;
-    private int xMin;
-    private int yMin;
-    private int zMin;
-    private int xMax;
-    private int yMax;
-    private int zMax;
-    
-    public TileTorcherino()
-    {
-        this.cachedMode = -1;
-        this.rand = new Random();
+    private boolean published;
+
+    protected int speed(int base) {
+        return base;
     }
-    
-    protected int speed(int base){return base;}
-    
+
     @Override
-    public void update()
-    {
-        if(this.world.isRemote) return;
-        if(this.poweredByRedstone || this.mode == 0 || this.speed == 0) return;
-        this.updateCachedModeIfNeeded();
-        this.tickNeighbors();
-    }
-    
-    private void updateCachedModeIfNeeded()
-    {
-        if(this.cachedMode != this.mode)
-        {
-            this.xMin = this.pos.getX() - this.mode;
-            this.yMin = this.pos.getY() - 1;
-            this.zMin = this.pos.getZ() - this.mode;
-            this.xMax = this.pos.getX() + this.mode;
-            this.yMax = this.pos.getY() + 1;
-            this.zMax = this.pos.getZ() + this.mode;
-            this.cachedMode = this.mode;
+    public void update() {
+        if (!world.isRemote && !published) {
+            publish();
         }
     }
-    
-    private void tickNeighbors()
-    {
-        for(int x = this.xMin; x <= this.xMax; x++)
-        {
-            for(int y = this.yMin; y <= this.yMax; y++)
-            {
-                for(int z = this.zMin; z <= this.zMax; z++)
-                {
-                    this.tickBlock(new BlockPos(x, y, z));
-                }
-            }
-        }
-    }
-    
-    private void tickBlock(BlockPos pos)
-    {
-    	IBlockState blockState = this.world.getBlockState(pos);
-        Block block = blockState.getBlock();
-        if(block == null || block instanceof BlockFluidBase || TorcherinoRegistry.isBlockBlacklisted(block))
-        {
-        	return;
-        }
-        if(block.getTickRandomly())
-        {
-            for(int i = 0; i < this.speed(this.speed); i++)
-            {
-                if(getWorld().getBlockState(pos) != blockState) break;
-                block.updateTick(this.world, pos, blockState, this.rand);
-            }
-        }
-        if(block.hasTileEntity(this.world.getBlockState(pos)))
-        {
-            TileEntity tile = this.world.getTileEntity(pos);
-            if(tile == null || tile.isInvalid())
-            {
-            	return;
-            }
-            if(TorcherinoRegistry.isTileBlacklisted(tile.getClass())) return;
-            for(int i = 0; i < this.speed(this.speed); i++)
-            {
-                if(tile.isInvalid())
-                {
-                	break;
-                }
-                if(tile instanceof ITickable)
-                {
-                	((ITickable) tile).update();
-                }
-            }
-        }
-    }
-    
-    public void setPoweredByRedstone(boolean poweredByRedstone)
-    {
-    	this.poweredByRedstone = poweredByRedstone;
-    }
-    
-    public void changeMode(boolean modifier)
-    {
-        if(modifier)
-        {
-            if(this.speed < TileTorcherino.SPEEDS)
-            {
-                this.speed++;
-            }
-            else
-            {
-                this.speed = 0;
-            }
-        }
-        else
-        {
-            if(this.mode < MODES.length - 1)
-            {
-                this.mode++;
-            }
-            else
-            {
-                this.mode = 0;
-            }
-        }
-    }
-    
-    public TextComponentString getDescription()
-    {
-    	return new TextComponentString(TileTorcherino.MODES[this.mode] + " | Speed: " + this.speed(this.speed) * 100 + "%");
-    }
-    
-    public String getMode()
-    {
-    	return TileTorcherino.MODES[this.mode];
-    }
-    
+
     @Override
-    public NBTTagCompound writeToNBT(NBTTagCompound tag)
-    {
+    public void onLoad() {
+        super.onLoad();
+        if (world != null && !world.isRemote) {
+            publish();
+        }
+    }
+
+    @Override
+    public void invalidate() {
+        if (world != null && !world.isRemote) {
+            AccelerationService.remove(this);
+        }
+        published = false;
+        super.invalidate();
+    }
+
+    @Override
+    public void onChunkUnload() {
+        if (world != null && !world.isRemote) {
+            AccelerationService.remove(this);
+        }
+        published = false;
+        super.onChunkUnload();
+    }
+
+    public TorchSnapshot createAccelerationSnapshot() {
+        int multiplier = poweredByRedstone ? 0 : speed(speed);
+        return new TorchSnapshot(pos.toLong(), mode, multiplier);
+    }
+
+    public void setPoweredByRedstone(boolean poweredByRedstone) {
+        if (this.poweredByRedstone == poweredByRedstone) {
+            return;
+        }
+        this.poweredByRedstone = poweredByRedstone;
+        changed();
+    }
+
+    public void changeMode(boolean modifier) {
+        if (modifier) {
+            speed = (byte) (speed < SPEEDS ? speed + 1 : 0);
+        } else {
+            mode = (byte) (mode < MODES.length - 1 ? mode + 1 : 0);
+        }
+        changed();
+    }
+
+    public TextComponentString getDescription() {
+        return new TextComponentString(
+            MODES[mode] + " | Speed: " + speed(speed) * 100 + "%"
+        );
+    }
+
+    public String getMode() {
+        return MODES[mode];
+    }
+
+    @Override
+    public NBTTagCompound writeToNBT(NBTTagCompound tag) {
         super.writeToNBT(tag);
-        tag.setByte("Speed", this.speed);
-        tag.setByte("Mode", this.mode);
-        tag.setBoolean("PoweredByRedstone", this.poweredByRedstone);
+        tag.setByte("Speed", speed);
+        tag.setByte("Mode", mode);
+        tag.setBoolean("PoweredByRedstone", poweredByRedstone);
         return tag;
     }
-    
+
     @Override
-    public void readFromNBT(NBTTagCompound tag)
-    {
+    public void readFromNBT(NBTTagCompound tag) {
         super.readFromNBT(tag);
-        this.speed = tag.getByte("Speed");
-        this.mode = tag.getByte("Mode");
-        this.poweredByRedstone = tag.getBoolean("PoweredByRedstone");
+        speed = (byte) clamp(tag.getByte("Speed"), 0, SPEEDS);
+        mode = (byte) clamp(tag.getByte("Mode"), 0, MODES.length - 1);
+        poweredByRedstone = tag.getBoolean("PoweredByRedstone");
+        published = false;
     }
-    
+
     @Override
-    public SPacketUpdateTileEntity getUpdatePacket()
-    {
-        NBTTagCompound nbt = new NBTTagCompound();
-        this.writeToNBT(nbt);
-        return new SPacketUpdateTileEntity(getPos(), -999, nbt);
+    public SPacketUpdateTileEntity getUpdatePacket() {
+        return new SPacketUpdateTileEntity(getPos(), -999, getUpdateTag());
     }
-    
+
     @Override
-    public void onDataPacket(NetworkManager net, SPacketUpdateTileEntity pkt)
-    {
-        super.onDataPacket(net, pkt);
-        this.readFromNBT(pkt.getNbtCompound());
+    public NBTTagCompound getUpdateTag() {
+        return writeToNBT(new NBTTagCompound());
     }
-    
+
     @Override
-    public boolean shouldRefresh(World world, BlockPos pos, IBlockState oldState, IBlockState newState)
-    {
+    public void onDataPacket(NetworkManager net, SPacketUpdateTileEntity packet) {
+        readFromNBT(packet.getNbtCompound());
+    }
+
+    @Override
+    public boolean shouldRefresh(
+        World world,
+        BlockPos pos,
+        IBlockState oldState,
+        IBlockState newState
+    ) {
         return oldState.getBlock() != newState.getBlock();
+    }
+
+    private void changed() {
+        markDirty();
+        if (world != null && !world.isRemote) {
+            publish();
+            IBlockState state = world.getBlockState(pos);
+            world.notifyBlockUpdate(pos, state, state, 3);
+        }
+    }
+
+    private void publish() {
+        AccelerationService.upsert(this);
+        published = true;
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 }
