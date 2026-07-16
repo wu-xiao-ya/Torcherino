@@ -1,7 +1,7 @@
 plugins {
     id 'java'
     id 'java-library'
-    id 'xyz.wagyourtail.unimined' version '1.4.23-kappa'
+    id 'xyz.wagyourtail.unimined' version '1.4.26-kappa'
 }
 
 version = mod_version
@@ -19,11 +19,23 @@ java {
 }
 
 repositories {
-    maven {
-        name = 'CleanroomNexus'
-        url = 'https://nexus.jsdu.cn/repository/'
-    }
     mavenCentral()
+    maven {
+        name = 'Forge'
+        url = 'https://maven.minecraftforge.net/'
+        metadataSources {
+            mavenPom()
+            artifact()
+        }
+    }
+    maven {
+        name = 'Fabric'
+        url = 'https://maven.fabricmc.net/'
+    }
+    maven {
+        name = 'Arcseekers'
+        url = 'https://maven.arcseekers.com/releases'
+    }
     maven {
         name = 'Cleanroom'
         url = 'https://maven.cleanroommc.com'
