@@ -121,8 +121,7 @@ jar {
     archiveClassifier = 'dev'
     manifest {
         attributes(
-            'ForceLoadAsMod': 'true',
-            'MixinConfigs': 'torcherino.mixins.json'
+            'ForceLoadAsMod': 'true'
         )
     }
 }
@@ -147,6 +146,11 @@ tasks.register('verifyPublishedJarManifest') {
             if (!'true'.equalsIgnoreCase(attributes.getValue('ForceLoadAsMod'))) {
                 throw new GradleException(
                     "Published jar must declare ForceLoadAsMod: true for hybrid server discovery"
+                )
+            }
+            if (attributes.getValue('MixinConfigs') != null) {
+                throw new GradleException(
+                    "Published jar must not activate a Mixin config until it contains required mixins"
                 )
             }
         } finally {

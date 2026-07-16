@@ -1,7 +1,7 @@
 package com.sci.torcherino;
 
-import com.sci.torcherino.blocks.ModBlocks;
-import com.sci.torcherino.network.EventHandler;
+import com.sci.torcherino.client.ClientBlockRenderer;
+import com.sci.torcherino.client.ClientEventHandler;
 import com.sci.torcherino.network.KeyHandler;
 
 import net.minecraftforge.common.MinecraftForge;
@@ -12,8 +12,8 @@ public class ClientProxy extends CommonProxy
 	public void preInit()
 	{
 		super.preInit();
-		ModBlocks.initRenders();
+		ClientBlockRenderer.init();
 		KeyHandler.preInit();
-		
+		MinecraftForge.EVENT_BUS.register(new ClientEventHandler());
 	}
 }

@@ -3,7 +3,6 @@ package com.sci.torcherino.network;
 import com.sci.torcherino.Torcherino;
 import com.sci.torcherino.acceleration.AccelerationService;
 import com.sci.torcherino.blocks.tiles.TileTorcherino;
-import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.EnumHand;
@@ -14,28 +13,8 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.PlayerEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 import net.minecraftforge.fml.relauncher.Side;
-import net.minecraftforge.fml.relauncher.SideOnly;
 
 public class EventHandler {
-    private boolean state;
-
-    @SubscribeEvent
-    @SideOnly(Side.CLIENT)
-    public void clientTick(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) {
-            return;
-        }
-        Minecraft minecraft = Minecraft.getMinecraft();
-        if (minecraft.isGamePaused() || minecraft.player == null) {
-            return;
-        }
-        boolean keyDown = minecraft.gameSettings.isKeyDown(KeyHandler.usageKey);
-        if (keyDown != state) {
-            PacketHandler.sendUpdateToSever(keyDown);
-            state = keyDown;
-        }
-    }
-
     @SubscribeEvent
     public void worldTick(TickEvent.WorldTickEvent event) {
         if (event.side == Side.SERVER

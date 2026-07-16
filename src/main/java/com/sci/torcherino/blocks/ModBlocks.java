@@ -1,9 +1,5 @@
 package com.sci.torcherino.blocks;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 import com.sci.torcherino.Torcherino;
 import com.sci.torcherino.blocks.blocks.BlockCompressedLanterino;
 import com.sci.torcherino.blocks.blocks.BlockCompressedTorcherino;
@@ -16,13 +12,7 @@ import com.sci.torcherino.blocks.tiles.TileDoubleCompressedTorcherino;
 import com.sci.torcherino.blocks.tiles.TileTorcherino;
 
 import net.minecraft.block.Block;
-import net.minecraft.client.renderer.block.model.ModelResourceLocation;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemBlock;
-import net.minecraft.util.ResourceLocation;
-import net.minecraftforge.client.model.ModelLoader;
-import net.minecraftforge.event.RegistryEvent;
-import net.minecraftforge.event.RegistryEvent.MissingMappings.Mapping;
 import net.minecraftforge.fml.common.registry.ForgeRegistries;
 import net.minecraftforge.fml.common.registry.GameRegistry;
 
@@ -62,14 +52,5 @@ public final class ModBlocks{
         //GameRegistry.registerTileEntity(TileTorcherino.class, new ResourceLocation(Torcherino.MOD_ID, "torcherino_tile"));
         //GameRegistry.registerTileEntity(TileCompressedTorcherino.class, new ResourceLocation(Torcherino.MOD_ID, "compressed_torcherino_tile"));
         //GameRegistry.registerTileEntity(TileDoubleCompressedTorcherino.class, new ResourceLocation(Torcherino.MOD_ID, "double_compressed_torcherino_tile"));
-    }
-    public static void initRenders()
-    {
-        ModelLoader.setCustomModelResourceLocation(Item.getItemFromBlock(torcherino), 0, new ModelResourceLocation(new ResourceLocation(Torcherino.MOD_ID, "blocktorcherino"), "inventory"));
-        ModelLoader.setCustomModelResourceLocation(Item.getItemFromBlock(compressedTorcherino), 0, new ModelResourceLocation(new ResourceLocation(Torcherino.MOD_ID, "blockcompressedtorcherino"), "inventory"));
-        ModelLoader.setCustomModelResourceLocation(Item.getItemFromBlock(doubleCompressedTorcherino), 0, new ModelResourceLocation(new ResourceLocation(Torcherino.MOD_ID, "blockdoublecompressedtorcherino"), "inventory"));
-        ModelLoader.setCustomModelResourceLocation(Item.getItemFromBlock(lanterino), 0, new ModelResourceLocation(new ResourceLocation(Torcherino.MOD_ID, "blocklanterino"), "inventory"));
-        ModelLoader.setCustomModelResourceLocation(Item.getItemFromBlock(compressedLanterino), 0, new ModelResourceLocation(new ResourceLocation(Torcherino.MOD_ID, "blockcompressedlanterino"), "inventory"));
-        ModelLoader.setCustomModelResourceLocation(Item.getItemFromBlock(doubleCompressedLanterino), 0, new ModelResourceLocation(new ResourceLocation(Torcherino.MOD_ID, "blockdoublecompressedlanterino"), "inventory"));
     }
 }
