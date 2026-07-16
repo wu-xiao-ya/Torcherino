@@ -121,7 +121,7 @@ jar {
     archiveClassifier = 'dev'
     manifest {
         attributes(
-            'ModType': 'CRL',
+            'ForceLoadAsMod': 'true',
             'MixinConfigs': 'torcherino.mixins.json'
         )
     }
@@ -131,5 +131,30 @@ tasks.named('remapJar') {
     archiveClassifier = ''
 }
 
+tasks.register('verifyPublishedJarManifest') {
+    dependsOn tasks.named('remapJar')
+
+    doLast {
+        def publishedJar = tasks.named('remapJar').get().archiveFile.get().asFile
+        def jarFile = new java.util.jar.JarFile(publishedJar)
+        try {
+            def attributes = jarFile.manifest.mainAttributes
+            if (attributes.getValue('ModType') != null) {
+                throw new GradleException(
+                    "Published jar must not declare ModType; CatRoom may skip the Forge @Mod container"
+                )
+            }
+            if (!'true'.equalsIgnoreCase(attributes.getValue('ForceLoadAsMod'))) {
+                throw new GradleException(
+                    "Published jar must declare ForceLoadAsMod: true for hybrid server discovery"
+                )
+            }
+        } finally {
+            jarFile.close()
+        }
+    }
+}
+
 build.dependsOn tasks.named('remapJar')
 build.dependsOn tasks.named('schedulerBenchmark')
+build.dependsOn tasks.named('verifyPublishedJarManifest')
