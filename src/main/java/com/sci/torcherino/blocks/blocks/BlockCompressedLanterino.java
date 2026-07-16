@@ -8,7 +8,7 @@ import net.minecraft.world.World;
 
 public final class BlockCompressedLanterino extends BlockLanterino
 {
-    public BlockCompressedLanterino(){this.setUnlocalizedName("torcherino.compressed_lanterino");}
+    public BlockCompressedLanterino(){this.setTranslationKey("torcherino.compressed_lanterino");}
     
     @Override
     public TileEntity createTileEntity(World world, IBlockState state){return new TileCompressedTorcherino();}

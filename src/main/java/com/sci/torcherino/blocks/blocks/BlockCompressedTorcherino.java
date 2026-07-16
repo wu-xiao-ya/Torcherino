@@ -6,7 +6,7 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 public final class BlockCompressedTorcherino extends BlockTorcherino
 {
-    public BlockCompressedTorcherino(){this.setUnlocalizedName("torcherino.compressed_torcherino");}
+    public BlockCompressedTorcherino(){this.setTranslationKey("torcherino.compressed_torcherino");}
     
     @Override
     public TileEntity createTileEntity(World world, IBlockState state){return new TileCompressedTorcherino();}

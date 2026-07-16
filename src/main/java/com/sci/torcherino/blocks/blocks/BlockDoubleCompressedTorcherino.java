@@ -8,7 +8,7 @@ import net.minecraft.world.World;
 
 public final class BlockDoubleCompressedTorcherino extends BlockTorcherino
 {
-    public BlockDoubleCompressedTorcherino(){this.setUnlocalizedName("torcherino.double_compressed_torcherino");}
+    public BlockDoubleCompressedTorcherino(){this.setTranslationKey("torcherino.double_compressed_torcherino");}
     
     @Override
     public TileEntity createTileEntity(World world, IBlockState state){return new TileDoubleCompressedTorcherino();}

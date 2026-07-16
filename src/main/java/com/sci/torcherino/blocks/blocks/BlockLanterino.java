@@ -23,7 +23,7 @@ public class BlockLanterino extends BlockPumpkin
 		this.setHardness(1.0F);
 		this.setSoundType(SoundType.WOOD);
         this.setLightLevel(1.0F);
-        this.setUnlocalizedName("torcherino.lanterino");
+        this.setTranslationKey("torcherino.lanterino");
     }
     @Override
     public void onBlockAdded(World world, BlockPos pos, IBlockState state)
@@ -31,7 +31,7 @@ public class BlockLanterino extends BlockPumpkin
         if(!world.isRemote)
         {
             TileEntity tile = world.getTileEntity(pos);
-            if(tile != null && tile instanceof TileTorcherino) ((TileTorcherino) tile).setPoweredByRedstone(world.isBlockIndirectlyGettingPowered(pos) > 0);
+            if(tile instanceof TileTorcherino) ((TileTorcherino) tile).setPoweredByRedstone(world.isBlockPowered(pos));
         }
         super.onBlockAdded(world, pos, state);
         if(Torcherino.logPlacement) Torcherino.logger.info(this.getClass().getName().substring(30) + " was placed at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
@@ -42,7 +42,7 @@ public class BlockLanterino extends BlockPumpkin
         if(!world.isRemote)
         {
             TileEntity tile = world.getTileEntity(pos);
-            if(tile != null && tile instanceof TileTorcherino) ((TileTorcherino) tile).setPoweredByRedstone(world.isBlockIndirectlyGettingPowered(pos) > 0);
+            if(tile instanceof TileTorcherino) ((TileTorcherino) tile).setPoweredByRedstone(world.isBlockPowered(pos));
         }
         super.neighborChanged(state, world, pos, block, fromPos);
     }
