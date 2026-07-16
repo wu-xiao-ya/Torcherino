@@ -1,8 +1,5 @@
 pluginManagement {
     repositories {
-        maven {
-            url = 'https://nexus.jsdu.cn/repository/'
-        }
         gradlePluginPortal()
         mavenCentral()
         maven {
@@ -17,11 +14,10 @@ pluginManagement {
         maven {
             url = 'https://maven.cleanroommc.com'
         }
+        maven {
+            url = 'https://nexus.jsdu.cn/repository/'
+        }
     }
-}
-
-plugins {
-    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
 }
 
 rootProject.name = 'Torcherino'
