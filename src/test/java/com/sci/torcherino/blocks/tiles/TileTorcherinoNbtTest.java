@@ -1,7 +1,9 @@
 package com.sci.torcherino.blocks.tiles;
 
+import com.sci.torcherino.Torcherino;
 import com.sci.torcherino.acceleration.TorchSnapshot;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.fml.common.registry.GameRegistry;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -11,15 +13,18 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class TileTorcherinoNbtTest {
     @BeforeAll
-    static void registerLegacyTileIds() {
-        GameRegistry.registerTileEntity(TileTorcherino.class, "torcherino_tile");
+    static void registerTileIds() {
+        GameRegistry.registerTileEntity(
+            TileTorcherino.class,
+            new ResourceLocation(Torcherino.MOD_ID, "torcherino_tile")
+        );
         GameRegistry.registerTileEntity(
             TileCompressedTorcherino.class,
-            "compressed_torcherino_tile"
+            new ResourceLocation(Torcherino.MOD_ID, "compressed_torcherino_tile")
         );
         GameRegistry.registerTileEntity(
             TileDoubleCompressedTorcherino.class,
-            "double_compressed_torcherino_tile"
+            new ResourceLocation(Torcherino.MOD_ID, "double_compressed_torcherino_tile")
         );
     }
 

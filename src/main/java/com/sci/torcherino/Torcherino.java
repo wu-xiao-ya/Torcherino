@@ -7,6 +7,7 @@ import com.sci.torcherino.blocks.tiles.TileCompressedTorcherino;
 import com.sci.torcherino.blocks.tiles.TileDoubleCompressedTorcherino;
 import com.sci.torcherino.blocks.tiles.TileTorcherino;
 import com.sci.torcherino.command.CommandTorcherino;
+import com.sci.torcherino.datafix.TorcherinoDataFixers;
 import net.minecraft.init.Blocks;
 import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.common.config.Property;
@@ -42,7 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class Torcherino {
     public static final String MOD_ID = "torcherino";
     public static final String MOD_NAME = "Torcherino";
-    public static final String VERSION = "8.0.0-alpha.3";
+    public static final String VERSION = "8.0.0-alpha.4";
 
     public static boolean logPlacement;
     public static boolean overPoweredRecipe;
@@ -91,6 +92,7 @@ public class Torcherino {
         config = new Configuration(new File(folder, MOD_NAME + ".cfg"));
         loadConfig();
 
+        TorcherinoDataFixers.register();
         AdapterRegistry.getInstance().registerBuiltIns();
         proxy.preInit();
     }
