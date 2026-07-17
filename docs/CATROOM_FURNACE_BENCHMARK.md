@@ -184,6 +184,36 @@ whole-server improvement: at x324 the current P50 is about 13.8% lower and P95
 about 10.2% lower than the scheduler-only fallback baseline. Larger machine
 arrays are still required before making a production-scale performance claim.
 
+### Torcherino 7.6 Upgrade Comparison
+
+The direct player-upgrade comparison uses:
+
+```text
+20260717-173853-torcherino-7.6-thermal/
+20260717-174641-alpha.6-current-thermal/
+```
+
+At x36 and x324, the old compressed Torcherino tile does not execute Thermal
+acceleration during every measured CatRoom tick. The x36 scenario has 14 active
+samples out of 100, while x324 has 5. Reporting all-sample P50 would therefore
+make 7.6 look faster by counting mostly idle ticks. The table below compares
+ticks that performed equivalent machine work and separately reports total work
+over the same 100-tick window.
+
+| Multiplier | Active samples, 7.6/current | 7.6/current active P50 ms | Current active-tick reduction | Total work ratio |
+| ---: | --- | --- | ---: | ---: |
+| 1 | 100 / 100 | 1.007 / 0.928 | 7.8% | 1.00x |
+| 4 | 100 / 100 | 0.744 / 0.760 | -2.2% | 1.00x |
+| 36 | 14 / 100 | 0.730 / 0.630 | 13.7% | 7.01x |
+| 324 | 5 / 100 | 1.261 / 0.738 | 41.5% | 19.95x |
+
+For x324, each active sample processes approximately the same energy and emits
+32 outputs. Torcherino 7.6 produces 160 items across the 100 measured ticks;
+the current scheduler produces 3,200, a 20x effective-throughput difference in
+this CatRoom test. This combines the centralized scheduler's reliable dispatch
+with the Thermal boundary-aware fast loop, so it represents the practical
+7.6-to-current upgrade rather than adapter-only CPU savings.
+
 Current artifacts:
 
 ```text
