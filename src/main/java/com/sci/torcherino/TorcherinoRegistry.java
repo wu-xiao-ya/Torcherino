@@ -7,13 +7,18 @@ import net.minecraft.util.ResourceLocation;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class TorcherinoRegistry {
-    private static final Set<Block> BLACKLISTED_BLOCKS = new HashSet<Block>();
+    private static final Set<Block> BLACKLISTED_BLOCKS =
+        java.util.Collections.newSetFromMap(
+            new ConcurrentHashMap<Block, Boolean>()
+        );
     private static final Set<Class<? extends TileEntity>> BLACKLISTED_TILES =
         new HashSet<Class<? extends TileEntity>>();
     private static final ConcurrentHashMap<Class<?>, Boolean> TILE_MATCH_CACHE =
         new ConcurrentHashMap<Class<?>, Boolean>();
+    private static final AtomicLong BLOCK_BLACKLIST_REVISION = new AtomicLong();
 
     private TorcherinoRegistry() {
     }
@@ -57,9 +62,9 @@ public final class TorcherinoRegistry {
         blacklistBlock(block);
     }
 
-    public static synchronized void blacklistBlock(Block block) {
-        if (block != null) {
-            BLACKLISTED_BLOCKS.add(block);
+    public static void blacklistBlock(Block block) {
+        if (block != null && BLACKLISTED_BLOCKS.add(block)) {
+            BLOCK_BLACKLIST_REVISION.incrementAndGet();
         }
     }
 
@@ -70,8 +75,12 @@ public final class TorcherinoRegistry {
         }
     }
 
-    public static synchronized boolean isBlockBlacklisted(Block block) {
+    public static boolean isBlockBlacklisted(Block block) {
         return BLACKLISTED_BLOCKS.contains(block);
+    }
+
+    public static long getBlockBlacklistRevision() {
+        return BLOCK_BLACKLIST_REVISION.get();
     }
 
     public static boolean isTileBlacklisted(Class<? extends TileEntity> tile) {

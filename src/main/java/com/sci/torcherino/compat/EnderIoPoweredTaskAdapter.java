@@ -90,6 +90,11 @@ final class EnderIoPoweredTaskAdapter
     }
 
     @Override
+    public boolean canCacheSupportForInstance() {
+        return true;
+    }
+
+    @Override
     public AdvanceResult advanceExact(
         TileEntity tile,
         int ticks,

@@ -287,10 +287,104 @@ profiler-off result no longer supports a large per-active-tick CPU claim against
 7.6 at x324; the verified gain is reliable every-tick dispatch and 20x effective
 throughput, plus about 10% lower P50 than the scheduler-only fallback.
 
+### Thermal Batch and Target Cache Follow-up
+
+The next pass replaces per-virtual-tick `updateAccelerable()` calls with a
+version-locked continuous-processing batch for Thermal Expansion 5.5.7
+metadata / 5.5.7.1 jar structure. It advances `processRem` and internal RF with
+the original integer energy curve, writes each continuous segment once, and
+returns to the original machine `update()` at recipe and stalled-energy
+boundaries. A 100,000-state randomized differential test compares the batch
+recurrence with tick-by-tick `calcEnergy()` behavior.
+
+The scheduler follow-up also caches immutable `BlockPos` and
+`AccelerationContext` values per covered coordinate, avoids the second block
+state lookup for non-random-tick blocks, and skips adapter timing calls while
+the profiler is disabled. Loaded-chunk, block state, TileEntity identity,
+invalidation, and replacement checks remain on the server thread.
+
+Verified reports:
+
+```text
+20260717-200506-alpha.6-current-thermal80/  batch repeat 1
+20260717-200625-alpha.6-current-thermal80/  batch repeat 2 and adapter probe
+20260717-201041-alpha.6-current-thermal80/  batch plus target cache
+```
+
+The adapter probe reports:
+
+```text
+thermalexpansion:official-accelerable [EXACT_FAST_LOOP] enabled
+thermalexpansion@5.5.7/.../batch#fb4510656f72
+verified Thermal continuous-process batch advancement
+```
+
+| Multiplier | 7.6 P50 ms | Scheduler P50 ms | Pre-batch current P50 ms | Batch + cache P50 ms | Change from pre-batch |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.493 | 1.932 | 1.524 | 1.518 | 0.4% faster |
+| 4 | 1.393 | 1.626 | 1.463 | 1.410 | 3.6% faster |
+| 36 | 1.544 | 1.510 | 1.440 | 1.415 | 1.8% faster |
+| 324 | 1.990 | 2.194 | 1.971 | 1.468 | 25.5% faster |
+
+The two batch-only x324 repeats measured `1.597 ms` and `1.557 ms` P50.
+Adding the immutable target cache reduced the next run to `1.468 ms`. At x1
+and x4 the current implementation is now within about 2% of Torcherino 7.6's
+direct single-torch path while retaining centralized overlap handling and
+reliable every-tick dispatch. At x36 and x324 it is respectively about 8% and
+26% faster per active server tick than 7.6 in this 80-machine layout.
+
+All 400 measured samples in the final run report `baselineRestored=true`.
+Energy, progress, and output remain consistent. At x36 and x324, 5 of 100
+samples include one additional normal world-machine tick; the remaining 95
+contain only the requested virtual multiplier. This is the harness's server
+event ordering and accounts exactly for the one-tick state difference.
+
+### Low-Multiplier Dispatch Follow-up
+
+The low-multiplier pass compiles stable coverage into parallel
+`TargetExecutionContext[]` and multiplier arrays whenever the coverage
+revision changes. Steady server ticks no longer iterate the coverage hash map
+or look up immutable coordinate contexts by hash. Empty and non-tickable
+positions return before entering the reentrancy set or slow-target timer.
+
+Adapter selection is also cached for the exact TileEntity instance when the
+adapter explicitly declares its support decision stable. External adapters
+remain non-cacheable by default. Tile replacement, invalidation, chunk unload,
+runtime adapter disable, or registry changes invalidate the route.
+
+Common immutable `AdvanceResult` values and stable `AdapterDispatch` values are
+reused. A fully consumed adapter result no longer allocates a fallback-validity
+closure when its fallback count is zero. Stable block-state metadata caches
+the block, random-tick flag, TileEntity flag, and blacklist result; a blacklist
+revision counter invalidates that metadata immediately when a block is added
+to the runtime blacklist.
+
+Absolute timings were variable during this later host session, so the final
+result uses two directly adjacent processes rather than comparing with an
+earlier baseline:
+
+```text
+20260717-233833-alpha.6-current-thermal80/
+20260717-233953-torcherino-7.6-thermal80/
+```
+
+| Multiplier | 7.6 P50 ms | Current P50 ms | Current change |
+| ---: | ---: | ---: | ---: |
+| 1 | 1.744 | 1.670 | 4.2% faster |
+| 4 | 1.672 | 1.549 | 7.3% faster |
+| 36 | 1.607 active | 1.564 | 2.7% faster per active tick |
+| 324 | 2.664 active | 1.893 | 28.9% faster per active tick |
+
+All current samples report `baselineRestored=true`. P95 and P99 remain noisy
+because of unrelated host scheduling spikes, so the low-load acceptance result
+is based on paired-process P50. The x1 and x4 paths are now measurably below
+Torcherino 7.6 in the same 80-machine, one-torch layout while retaining
+centralized overlap semantics.
+
 Current artifacts:
 
 ```text
-B8F059575DEA76A9CEA2D721849A076E29937D18EC2F3FB77B873ADA6B0128C4
+407AE8D5E7944FFCA951D84AC3E5030340A90F107B7CCC25B18F2E24EE5A501E
 build/libs/torcherino-8.0.0-alpha.6.jar
 
 05AB93F803C6E08A7DE486D12800C5BA1B18CB6D73F9BEADA02B9CCDE35F9B42

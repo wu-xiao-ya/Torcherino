@@ -13,5 +13,9 @@ public interface IExactAccelerationAdapter<T extends TileEntity> {
 
     boolean supportsInstance(TileEntity tile);
 
+    default boolean canCacheSupportForInstance() {
+        return false;
+    }
+
     AdvanceResult advanceExact(T tile, int ticks, AccelerationContext context) throws Exception;
 }

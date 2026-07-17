@@ -90,6 +90,11 @@ final class PatternCompatibilityAdapter
     }
 
     @Override
+    public boolean canCacheSupportForInstance() {
+        return true;
+    }
+
+    @Override
     public AdvanceResult advanceExact(TileEntity tile, int ticks, AccelerationContext context) {
         if (classification == AdapterClassification.BLACKLIST) {
             return AdvanceResult.invalidated(0);

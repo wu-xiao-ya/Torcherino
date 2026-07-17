@@ -24,6 +24,7 @@ public final class AdapterRegistry {
         new CopyOnWriteArrayList<Entry<?>>();
     private volatile boolean builtInsRegistered;
     private volatile boolean probesCompleted;
+    private volatile long generation;
 
     private AdapterRegistry() {
     }
@@ -54,8 +55,10 @@ public final class AdapterRegistry {
         Entry<T> entry = new Entry<T>(adapter);
         entries.add(entry);
         sortEntries();
+        generation++;
         if (probesCompleted) {
             entry.probe();
+            generation++;
         }
     }
 
@@ -64,42 +67,35 @@ public final class AdapterRegistry {
             entry.probe();
         }
         probesCompleted = true;
+        generation++;
     }
 
     AdapterDispatch dispatch(TileEntity tile, int ticks, AccelerationContext context) {
-        if (tile instanceof IBatchedAcceleratable) {
+        return dispatchPrepared(tile, ticks, context, prepare(tile, null));
+    }
+
+    AdapterDispatch dispatchPrepared(
+        TileEntity tile,
+        int ticks,
+        AccelerationContext context,
+        PreparedRoute route
+    ) {
+        if (route.cooperative) {
             AdvanceResult result = validate(
                 ((IBatchedAcceleratable) tile).advanceExact(ticks, context),
                 ticks
             );
-            return new AdapterDispatch(
-                "cooperative-api",
-                AdapterClassification.EXACT_BATCH,
-                result,
-                false
-            );
+            return route.dispatch(result);
         }
 
-        for (Entry<?> entry : entries) {
-            if (!entry.enabled || !entry.adapter.supportsInstance(tile)) {
-                continue;
-            }
+        Entry<?> entry = route.entry;
+        if (entry != null) {
             if (entry.adapter.getClassification() == AdapterClassification.BLACKLIST) {
-                return new AdapterDispatch(
-                    entry.adapter.getId(),
-                    AdapterClassification.BLACKLIST,
-                    AdvanceResult.invalidated(0),
-                    true
-                );
+                return route.dispatch(AdvanceResult.invalidated(0));
             }
             try {
                 AdvanceResult result = validate(entry.advance(tile, ticks, context), ticks);
-                return new AdapterDispatch(
-                    entry.adapter.getId(),
-                    entry.adapter.getClassification(),
-                    result,
-                    false
-                );
+                return route.dispatch(result);
             } catch (AdapterExecutionException e) {
                 if (e.getConsumedTicks() > 0) {
                     throw new IllegalStateException(
@@ -108,17 +104,23 @@ public final class AdapterRegistry {
                         e
                     );
                 }
-                entry.disable("runtime access failure: " + e.getClass().getSimpleName());
+                disable(
+                    entry,
+                    "runtime access failure: " + e.getClass().getSimpleName()
+                );
                 Torcherino.logger.warn("Disabling Torcherino adapter {} after access failure", entry.adapter.getId(), e);
-                break;
             } catch (ReflectiveOperationException e) {
-                entry.disable("runtime reflection failure: " + e.getClass().getSimpleName());
+                disable(
+                    entry,
+                    "runtime reflection failure: " + e.getClass().getSimpleName()
+                );
                 Torcherino.logger.warn("Disabling Torcherino adapter {} after reflection failure", entry.adapter.getId(), e);
-                break;
             } catch (LinkageError e) {
-                entry.disable("runtime linkage failure: " + e.getClass().getSimpleName());
+                disable(
+                    entry,
+                    "runtime linkage failure: " + e.getClass().getSimpleName()
+                );
                 Torcherino.logger.warn("Disabling Torcherino adapter {} after linkage failure", entry.adapter.getId(), e);
-                break;
             } catch (Exception e) {
                 throw new IllegalStateException(
                     "Torcherino adapter " + entry.adapter.getId() + " failed",
@@ -127,12 +129,41 @@ public final class AdapterRegistry {
             }
         }
 
-        return new AdapterDispatch(
-            "legacy-update",
-            AdapterClassification.LEGACY_FALLBACK,
-            AdvanceResult.fallback(ticks),
-            false
+        return PreparedRoute.legacy(generation, false).dispatch(
+            AdvanceResult.fallback(ticks)
         );
+    }
+
+    PreparedRoute prepare(TileEntity tile, PreparedRoute previous) {
+        long currentGeneration = generation;
+        if (previous != null
+            && previous.reusable
+            && previous.generation == currentGeneration
+            && (previous.entry == null || previous.entry.enabled)) {
+            return previous;
+        }
+        if (tile instanceof IBatchedAcceleratable) {
+            return PreparedRoute.cooperative(currentGeneration);
+        }
+
+        boolean noMatchReusable = true;
+        for (Entry<?> entry : entries) {
+            if (!entry.enabled) {
+                continue;
+            }
+            boolean stable = entry.adapter.canCacheSupportForInstance();
+            if (!stable) {
+                noMatchReusable = false;
+            }
+            if (entry.adapter.supportsInstance(tile)) {
+                return PreparedRoute.adapter(
+                    currentGeneration,
+                    entry,
+                    stable
+                );
+            }
+        }
+        return PreparedRoute.legacy(currentGeneration, noMatchReusable);
     }
 
     public List<AdapterReport> getReports() {
@@ -159,6 +190,11 @@ public final class AdapterRegistry {
         });
         entries.clear();
         entries.addAll(sorted);
+    }
+
+    private void disable(Entry<?> entry, String reason) {
+        entry.disable(reason);
+        generation++;
     }
 
     private static AdvanceResult validate(AdvanceResult result, int requestedTicks) {
@@ -212,6 +248,97 @@ public final class AdapterRegistry {
         private void disable(String reason) {
             enabled = false;
             detail = reason;
+        }
+    }
+
+    static final class PreparedRoute {
+        private final long generation;
+        private final Entry<?> entry;
+        private final boolean cooperative;
+        private final boolean reusable;
+        private final String adapterId;
+        private final AdapterClassification classification;
+        private final boolean blacklisted;
+        private AdvanceResult cachedResult;
+        private AdapterDispatch cachedDispatch;
+
+        private PreparedRoute(
+            long generation,
+            Entry<?> entry,
+            boolean cooperative,
+            boolean reusable,
+            String adapterId,
+            AdapterClassification classification,
+            boolean blacklisted
+        ) {
+            this.generation = generation;
+            this.entry = entry;
+            this.cooperative = cooperative;
+            this.reusable = reusable;
+            this.adapterId = adapterId;
+            this.classification = classification;
+            this.blacklisted = blacklisted;
+        }
+
+        private static PreparedRoute cooperative(long generation) {
+            return new PreparedRoute(
+                generation,
+                null,
+                true,
+                true,
+                "cooperative-api",
+                AdapterClassification.EXACT_BATCH,
+                false
+            );
+        }
+
+        private static PreparedRoute adapter(
+            long generation,
+            Entry<?> entry,
+            boolean reusable
+        ) {
+            AdapterClassification classification =
+                entry.adapter.getClassification();
+            return new PreparedRoute(
+                generation,
+                entry,
+                false,
+                reusable,
+                entry.adapter.getId(),
+                classification,
+                classification == AdapterClassification.BLACKLIST
+            );
+        }
+
+        private static PreparedRoute legacy(long generation, boolean reusable) {
+            return new PreparedRoute(
+                generation,
+                null,
+                false,
+                reusable,
+                "legacy-update",
+                AdapterClassification.LEGACY_FALLBACK,
+                false
+            );
+        }
+
+        boolean isReusable() {
+            return reusable;
+        }
+
+        private AdapterDispatch dispatch(AdvanceResult result) {
+            if (cachedResult == result && cachedDispatch != null) {
+                return cachedDispatch;
+            }
+            AdapterDispatch created = new AdapterDispatch(
+                adapterId,
+                classification,
+                result,
+                blacklisted
+            );
+            cachedResult = result;
+            cachedDispatch = created;
+            return created;
         }
     }
 }

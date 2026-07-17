@@ -10,6 +10,7 @@ import it.unimi.dsi.fastutil.longs.Long2IntMaps;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.block.Block;
 import net.minecraft.block.state.IBlockState;
@@ -30,11 +31,16 @@ public final class WorldAccelerationManager {
         new Long2ObjectOpenHashMap<TorchSnapshot>();
     private final LongOpenHashSet activeTargets = new LongOpenHashSet();
     private final Long2LongOpenHashMap targetWarnTimes = new Long2LongOpenHashMap();
+    private final Long2ObjectOpenHashMap<TargetExecutionContext> targetContexts =
+        new Long2ObjectOpenHashMap<TargetExecutionContext>();
     private final ArrayDeque<Runnable> deferredChanges = new ArrayDeque<Runnable>();
     private final CoverageMailbox mailbox = new CoverageMailbox();
     private final Random random = new Random();
 
     private Long2IntOpenHashMap coverage = new Long2IntOpenHashMap();
+    private TargetExecutionContext[] traversalTargets =
+        new TargetExecutionContext[0];
+    private int[] traversalMultipliers = new int[0];
     private long revision;
     private long appliedPlanRevision;
     private boolean ticking;
@@ -85,14 +91,10 @@ public final class WorldAccelerationManager {
         long managerStart = System.nanoTime();
         ticking = true;
         try {
-            java.util.Iterator<Long2IntMap.Entry> iterator =
-                Long2IntMaps.fastIterator(coverage);
-            while (iterator.hasNext()) {
-                Long2IntMap.Entry entry = iterator.next();
-                int multiplier = entry.getIntValue();
-                if (multiplier > 0) {
-                    tickTarget(entry.getLongKey(), multiplier);
-                }
+            TargetExecutionContext[] targets = traversalTargets;
+            int[] multipliers = traversalMultipliers;
+            for (int i = 0; i < targets.length; i++) {
+                tickTarget(targets[i], multipliers[i]);
             }
         } finally {
             ticking = false;
@@ -135,85 +137,142 @@ public final class WorldAccelerationManager {
         deferredChanges.clear();
         activeTargets.clear();
         targetWarnTimes.clear();
+        targetContexts.clear();
+        traversalTargets = new TargetExecutionContext[0];
+        traversalMultipliers = new int[0];
     }
 
-    private void tickTarget(long packedPos, int multiplier) {
+    private void tickTarget(TargetExecutionContext cachedContext, int multiplier) {
+        long packedPos = cachedContext.packedPos;
+        BlockPos pos = cachedContext.pos;
+        AccelerationProfiler profiler = AccelerationProfiler.getInstance();
+        boolean profiling = profiler.isEnabled();
+        long scanStart = profiling ? System.nanoTime() : 0L;
+        if (!world.isBlockLoaded(pos, false)) {
+            cachedContext.clearRoute();
+            recordSkipped(
+                profiler,
+                profiling,
+                "unloaded",
+                "unknown",
+                multiplier,
+                scanStart
+            );
+            return;
+        }
+
+        IBlockState state = world.getBlockState(pos);
+        cachedContext.updateBlockState(state);
+        Block block = cachedContext.block;
+        if (cachedContext.blockBlacklisted) {
+            cachedContext.clearRoute();
+            recordSkipped(
+                profiler,
+                profiling,
+                "block-blacklisted",
+                block.getClass().getName(),
+                multiplier,
+                scanStart
+            );
+            return;
+        }
+
+        boolean randomTick = cachedContext.randomTick;
+        TileEntity tile = null;
+        if (!randomTick) {
+            if (!cachedContext.hasTileEntity) {
+                cachedContext.clearRoute();
+                recordSkipped(
+                    profiler,
+                    profiling,
+                    "no-tile",
+                    block.getClass().getName(),
+                    multiplier,
+                    scanStart
+                );
+                return;
+            }
+            tile = world.getTileEntity(pos);
+            if (!isExecutableTile(
+                profiler,
+                profiling,
+                tile,
+                block,
+                multiplier,
+                scanStart
+            )) {
+                cachedContext.clearRoute();
+                return;
+            }
+        }
+
         if (!activeTargets.add(packedPos)) {
             return;
         }
         long targetStart = System.nanoTime();
-        BlockPos pos = BlockPos.fromLong(packedPos);
         try {
-            if (!world.isBlockLoaded(pos, false)) {
-                recordSkipped("unloaded", "unknown", multiplier, targetStart);
-                return;
-            }
-
-            IBlockState state = world.getBlockState(pos);
-            Block block = state.getBlock();
-            if (block instanceof BlockFluidBase || TorcherinoRegistry.isBlockBlacklisted(block)) {
-                recordSkipped(
-                    "block-blacklisted",
-                    block.getClass().getName(),
-                    multiplier,
-                    targetStart
-                );
-                return;
-            }
-
-            if (block.getTickRandomly()) {
+            if (randomTick) {
                 tickRandomBlock(pos, state, block, multiplier);
-            }
-
-            IBlockState tileState = world.getBlockState(pos);
-            if (!tileState.getBlock().hasTileEntity(tileState)) {
-                recordSkipped(
-                    "no-tile",
-                    tileState.getBlock().getClass().getName(),
+                state = world.getBlockState(pos);
+                cachedContext.updateBlockState(state);
+                block = cachedContext.block;
+                if (!cachedContext.hasTileEntity) {
+                    cachedContext.clearRoute();
+                    recordSkipped(
+                        profiler,
+                        profiling,
+                        "no-tile",
+                        block.getClass().getName(),
+                        multiplier,
+                        scanStart
+                    );
+                    return;
+                }
+                tile = world.getTileEntity(pos);
+                if (!isExecutableTile(
+                    profiler,
+                    profiling,
+                    tile,
+                    block,
                     multiplier,
-                    targetStart
-                );
-                return;
-            }
-            TileEntity tile = world.getTileEntity(pos);
-            if (tile == null) {
-                recordSkipped("missing-tile", tileState.getBlock().getClass().getName(), multiplier, targetStart);
-                return;
-            }
-            if (tile.isInvalid()) {
-                recordSkipped("invalid-tile", tile.getClass().getName(), multiplier, targetStart);
-                return;
-            }
-            if (TorcherinoRegistry.isTileBlacklisted(tile.getClass())) {
-                recordSkipped("tile-blacklisted", tile.getClass().getName(), multiplier, targetStart);
-                return;
-            }
-            if (!(tile instanceof ITickable)) {
-                recordSkipped("not-tickable", tile.getClass().getName(), multiplier, targetStart);
-                return;
+                    scanStart
+                )) {
+                    cachedContext.clearRoute();
+                    return;
+                }
             }
 
-            AccelerationContext context = new AccelerationContext(world, pos);
-            long adapterStart = System.nanoTime();
-            AdapterDispatch dispatch = AdapterRegistry.getInstance().dispatch(tile, multiplier, context);
+            long adapterStart = profiling ? System.nanoTime() : 0L;
+            AdapterRegistry registry = AdapterRegistry.getInstance();
+            AdapterRegistry.PreparedRoute route =
+                cachedContext.prepareRoute(registry, tile);
+            AdapterDispatch dispatch = registry.dispatchPrepared(
+                tile,
+                multiplier,
+                cachedContext.acceleration,
+                route
+            );
             if (dispatch.isBlacklisted()) {
-                AccelerationProfiler.getInstance().recordBlacklisted(
-                    tile.getClass().getName(),
-                    dispatch.getAdapterId(),
-                    multiplier,
-                    System.nanoTime() - adapterStart
-                );
+                if (profiling) {
+                    profiler.recordBlacklisted(
+                        tile.getClass().getName(),
+                        dispatch.getAdapterId(),
+                        multiplier,
+                        System.nanoTime() - adapterStart
+                    );
+                }
                 return;
             }
 
             AdvanceResult result = dispatch.getResult();
             int fallbackTicks = 0;
-            if (!result.isInvalidated()) {
+            int requestedFallbackTicks = result.getFallbackTicks();
+            if (!result.isInvalidated() && requestedFallbackTicks > 0) {
                 final TileEntity expectedTile = tile;
                 fallbackTicks = runFallbackTicks(
                     tile,
                     (ITickable) tile,
-                    result.getFallbackTicks(),
+                    requestedFallbackTicks,
                     new BooleanSupplier() {
                         @Override
                         public boolean getAsBoolean() {
@@ -226,18 +285,75 @@ public final class WorldAccelerationManager {
             if (result.isSyncRequired() && !tile.isInvalid()) {
                 tile.markDirty();
             }
-            AccelerationProfiler.getInstance().record(
-                tile.getClass().getName(),
-                dispatch.getAdapterId(),
-                dispatch.getClassification(),
-                multiplier,
-                fallbackTicks,
-                System.nanoTime() - adapterStart
-            );
+            if (profiling) {
+                profiler.record(
+                    tile.getClass().getName(),
+                    dispatch.getAdapterId(),
+                    dispatch.getClassification(),
+                    multiplier,
+                    fallbackTicks,
+                    System.nanoTime() - adapterStart
+                );
+            }
         } finally {
             activeTargets.remove(packedPos);
             warnSlowTarget(packedPos, pos, System.nanoTime() - targetStart);
         }
+    }
+
+    private boolean isExecutableTile(
+        AccelerationProfiler profiler,
+        boolean profiling,
+        TileEntity tile,
+        Block block,
+        int multiplier,
+        long scanStart
+    ) {
+        if (tile == null) {
+            recordSkipped(
+                profiler,
+                profiling,
+                "missing-tile",
+                block.getClass().getName(),
+                multiplier,
+                scanStart
+            );
+            return false;
+        }
+        if (tile.isInvalid()) {
+            recordSkipped(
+                profiler,
+                profiling,
+                "invalid-tile",
+                tile.getClass().getName(),
+                multiplier,
+                scanStart
+            );
+            return false;
+        }
+        if (TorcherinoRegistry.isTileBlacklisted(tile.getClass())) {
+            recordSkipped(
+                profiler,
+                profiling,
+                "tile-blacklisted",
+                tile.getClass().getName(),
+                multiplier,
+                scanStart
+            );
+            return false;
+        }
+        if (!(tile instanceof ITickable)) {
+            recordSkipped(
+                profiler,
+                profiling,
+                "not-tickable",
+                tile.getClass().getName(),
+                multiplier,
+                scanStart
+            );
+            return false;
+        }
+        return true;
     }
 
     private void tickRandomBlock(BlockPos pos, IBlockState state, Block block, int multiplier) {
@@ -284,13 +400,18 @@ public final class WorldAccelerationManager {
         );
     }
 
-    private void recordSkipped(
+    private static void recordSkipped(
+        AccelerationProfiler profiler,
+        boolean profiling,
         String reason,
         String targetClass,
         int skippedTicks,
         long startedAt
     ) {
-        AccelerationProfiler.getInstance().recordSkipped(
+        if (!profiling) {
+            return;
+        }
+        profiler.recordSkipped(
             targetClass,
             reason,
             skippedTicks,
@@ -308,6 +429,7 @@ public final class WorldAccelerationManager {
 
     private void changed() {
         revision++;
+        rebuildTraversal();
         CoverageSnapshot snapshot = new CoverageSnapshot(
             managerId,
             world.provider.getDimension(),
@@ -340,7 +462,46 @@ public final class WorldAccelerationManager {
         Long2IntOpenHashMap plannedCoverage = plan.getCoverage();
         plannedCoverage.defaultReturnValue(0);
         coverage = plannedCoverage;
+        rebuildTraversal();
         appliedPlanRevision = plan.getRevision();
+    }
+
+    private void rebuildTraversal() {
+        TargetExecutionContext[] targets =
+            new TargetExecutionContext[coverage.size()];
+        int[] multipliers = new int[coverage.size()];
+        int index = 0;
+        java.util.Iterator<Long2IntMap.Entry> iterator =
+            Long2IntMaps.fastIterator(coverage);
+        while (iterator.hasNext()) {
+            Long2IntMap.Entry entry = iterator.next();
+            int multiplier = entry.getIntValue();
+            if (multiplier <= 0) {
+                continue;
+            }
+            long packedPos = entry.getLongKey();
+            TargetExecutionContext context = targetContexts.get(packedPos);
+            if (context == null) {
+                context = new TargetExecutionContext(world, packedPos);
+                targetContexts.put(packedPos, context);
+            }
+            targets[index] = context;
+            multipliers[index] = multiplier;
+            index++;
+        }
+        if (index != targets.length) {
+            targets = java.util.Arrays.copyOf(targets, index);
+            multipliers = java.util.Arrays.copyOf(multipliers, index);
+        }
+
+        LongIterator cachedPositions = targetContexts.keySet().iterator();
+        while (cachedPositions.hasNext()) {
+            if (!coverage.containsKey(cachedPositions.nextLong())) {
+                cachedPositions.remove();
+            }
+        }
+        traversalTargets = targets;
+        traversalMultipliers = multipliers;
     }
 
     static boolean acceptsPlan(
@@ -353,5 +514,64 @@ public final class WorldAccelerationManager {
             && plan.getManagerId() == expectedManagerId
             && plan.getDimension() == expectedDimension
             && plan.getRevision() == expectedRevision;
+    }
+
+    private static final class TargetExecutionContext {
+        private final long packedPos;
+        private final BlockPos pos;
+        private final AccelerationContext acceleration;
+        private IBlockState blockState;
+        private Block block;
+        private long blockBlacklistRevision = Long.MIN_VALUE;
+        private boolean blockBlacklisted;
+        private boolean randomTick;
+        private boolean hasTileEntity;
+        private TileEntity routeTile;
+        private AdapterRegistry.PreparedRoute route;
+
+        private TargetExecutionContext(WorldServer world, long packedPos) {
+            this.packedPos = packedPos;
+            pos = BlockPos.fromLong(packedPos);
+            acceleration = new AccelerationContext(world, pos);
+        }
+
+        private void updateBlockState(IBlockState state) {
+            long blacklistRevision =
+                TorcherinoRegistry.getBlockBlacklistRevision();
+            if (blockState == state
+                && blockBlacklistRevision == blacklistRevision) {
+                return;
+            }
+            blockState = state;
+            block = state.getBlock();
+            blockBlacklistRevision = blacklistRevision;
+            blockBlacklisted = block instanceof BlockFluidBase
+                || TorcherinoRegistry.isBlockBlacklisted(block);
+            randomTick = block.getTickRandomly();
+            hasTileEntity = block.hasTileEntity(state);
+        }
+
+        private AdapterRegistry.PreparedRoute prepareRoute(
+            AdapterRegistry registry,
+            TileEntity tile
+        ) {
+            AdapterRegistry.PreparedRoute previous =
+                routeTile == tile ? route : null;
+            AdapterRegistry.PreparedRoute prepared =
+                registry.prepare(tile, previous);
+            if (prepared.isReusable()) {
+                routeTile = tile;
+                route = prepared;
+            } else {
+                routeTile = null;
+                route = null;
+            }
+            return prepared;
+        }
+
+        private void clearRoute() {
+            routeTile = null;
+            route = null;
+        }
     }
 }

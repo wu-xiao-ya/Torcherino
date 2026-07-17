@@ -84,6 +84,11 @@ final class Ic2StandardMachineAdapter
     }
 
     @Override
+    public boolean canCacheSupportForInstance() {
+        return true;
+    }
+
+    @Override
     public AdvanceResult advanceExact(
         TileEntity tile,
         int ticks,
