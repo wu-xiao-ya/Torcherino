@@ -34,8 +34,8 @@ public final class WorldArena {
     private static final ResourceLocation NORMAL_TORCHERINO =
         new ResourceLocation("torcherino", "blocktorcherino");
     private static final BlockPos ORIGIN = new BlockPos(32, 80, 32);
-    private static final int WIDTH = 8;
-    private static final int DEPTH = 8;
+    private static final int WIDTH = 9;
+    private static final int DEPTH = 9;
     private static final int FLOOR_Y_OFFSET = 0;
     private static final int MACHINE_Y_OFFSET = 1;
     private static final int TORCH_Y_OFFSET = 2;
@@ -718,7 +718,7 @@ public final class WorldArena {
     private List<BlockPos> torcherinoPlacements(int torchCount) {
         List<BlockPos> placements = new ArrayList<BlockPos>();
         if (torchCount == 1) {
-            placements.add(origin.add(3, TORCH_Y_OFFSET, 3));
+            placements.add(origin.add(WIDTH / 2, TORCH_Y_OFFSET, DEPTH / 2));
             return placements;
         }
         for (int x = 0; x <= WIDTH && placements.size() < torchCount; x++) {

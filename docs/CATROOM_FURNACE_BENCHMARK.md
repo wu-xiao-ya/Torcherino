@@ -62,6 +62,7 @@ each scenario. It accepts an optional layer selector:
 /torcherino-bench run furnace-suite all
 /torcherino-bench run furnace-suite vanilla
 /torcherino-bench run furnace-suite thermal
+/torcherino-bench run furnace-suite thermal80
 /torcherino-bench run furnace-suite enderio
 ```
 
@@ -71,6 +72,8 @@ The matrix contains:
   `1`, `4`, `36`, and `324`
 - One vanilla furnace with `1`, `16`, and `64` distinct overlapping torches
 - 16 Thermal Expansion Redstone Furnaces at `1`, `4`, `36`, and `324`
+- 80 Thermal Expansion Redstone Furnaces in a centered 9x9 stress layout at
+  `1`, `4`, `36`, and `324` when the `thermal80` layer is selected
 - 16 Ender IO Alloy Smelters at `1`, `4`, `36`, and `324`
 
 Optional-mod machines are found through the Forge registry and accessed through
@@ -214,12 +217,44 @@ this CatRoom test. This combines the centralized scheduler's reliable dispatch
 with the Thermal boundary-aware fast loop, so it represents the practical
 7.6-to-current upgrade rather than adapter-only CPU savings.
 
+### Thermal 80-Machine Stress Result
+
+The `thermal80` layer places 80 Redstone Furnaces in a centered 9x9 layout under
+one maximum-range torch. Valid reports:
+
+```text
+20260717-185836-torcherino-7.6-thermal80/
+20260717-190205-c8bcaae-scheduler-baseline-thermal80/
+20260717-190913-alpha.6-current-thermal80/
+```
+
+| Multiplier | Active samples, 7.6/current | 7.6/current active P50 ms | Current P50 change | Total work ratio |
+| ---: | --- | --- | ---: | ---: |
+| 1 | 100 / 100 | 1.679 / 1.785 | 6.3% slower | 1.00x |
+| 4 | 100 / 100 | 1.557 / 1.666 | 7.0% slower | 1.00x |
+| 36 | 13 / 100 | 1.499 / 1.610 | 7.4% slower | 7.51x |
+| 324 | 5 / 100 | 2.847 / 1.888 | 33.7% faster | 19.95x |
+
+The 80-machine result confirms that the low-multiplier difference is real fixed
+scheduler overhead rather than only measurement noise. At x4, the current
+adapter is effectively tied with the scheduler-only baseline
+(`1.666 ms` versus `1.675 ms`), but the centralized scheduler remains about 7%
+slower than 7.6's direct single-torch path in this non-overlapping layout.
+
+At x36, the current version spends slightly more time on each active tick but
+executes on every measured tick, producing 7.51x the total processing work. At
+x324 it is both faster per active tick and reliable every tick: 7.6 emits 800
+items across the window, while the current version emits 16,000. One current
+x324 run contains a roughly 49 ms P99 outlier, so the P50 comparison is the
+stable result; additional process-level repetitions are required for a strong
+tail-latency claim.
+
 Current artifacts:
 
 ```text
-85E75E26FE27DFFFAC7BD5EC302DAAACE502F9D804B08DE225FEBF4A1A66FC25
+B8F059575DEA76A9CEA2D721849A076E29937D18EC2F3FB77B873ADA6B0128C4
 build/libs/torcherino-8.0.0-alpha.6.jar
 
-07CC17FD84F058AE66CD6240EC7FFC76F2E79448CE0D753659770536C19B89F2
+1B8BC1E8188FFFDACB574FDFE7095B988FEF153C8CA4103815369005273FC874
 build/libs/torcherino-benchmark-harness-8.0.0-alpha.6.jar
 ```

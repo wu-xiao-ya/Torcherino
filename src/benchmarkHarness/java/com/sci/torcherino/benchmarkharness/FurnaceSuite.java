@@ -20,6 +20,7 @@ public final class FurnaceSuite implements BenchmarkSuite {
         if (!"all".equals(selectedLayer)
             && !"vanilla".equals(selectedLayer)
             && !"thermal".equals(selectedLayer)
+            && !"thermal80".equals(selectedLayer)
             && !"enderio".equals(selectedLayer)) {
             throw new IllegalArgumentException("Unknown furnace benchmark layer: " + layer);
         }
@@ -35,6 +36,16 @@ public final class FurnaceSuite implements BenchmarkSuite {
                 "thermal-redstone-furnace",
                 "Thermal Expansion 16 Redstone Furnaces",
                 ScenarioKind.THERMAL_REDSTONE_FURNACE
+            );
+        }
+        if ("thermal80".equals(selectedLayer)) {
+            addMachineScenario(
+                scenarios,
+                "thermal-redstone-furnace-80",
+                "Thermal Expansion 80 Redstone Furnaces",
+                ScenarioKind.THERMAL_REDSTONE_FURNACE,
+                80,
+                1
             );
         }
         if ("all".equals(selectedLayer) || "enderio".equals(selectedLayer)) {

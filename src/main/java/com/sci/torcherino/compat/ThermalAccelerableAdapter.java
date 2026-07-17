@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 final class ThermalAccelerableAdapter
     implements IExactAccelerationAdapter<TileEntity> {
     private static final String INTERFACE_NAME = "cofh.api.core.IAccelerable";
+    private static final int FAST_LOOP_MIN_TICKS = 5;
 
     private Class<?> interfaceClass;
     private MethodHandle updateAccelerable;
@@ -79,6 +80,16 @@ final class ThermalAccelerableAdapter
     @Override
     public AdvanceResult advanceExact(TileEntity tile, int ticks, AccelerationContext context)
         throws Exception {
+        if (ticks < FAST_LOOP_MIN_TICKS) {
+            int consumed = 0;
+            for (; consumed < ticks; consumed++) {
+                if (tile.isInvalid()) {
+                    return AdvanceResult.invalidated(consumed);
+                }
+                ((ITickable) tile).update();
+            }
+            return AdvanceResult.consumed(consumed, false);
+        }
         int consumed = 0;
         try {
             MethodHandle canFinish = canFinishHandle(tile.getClass());

@@ -93,7 +93,7 @@ param(
     [string]$CandidateSelection = 'all',
 
     [Parameter()]
-    [ValidateSet('vanilla', 'thermal', 'enderio')]
+    [ValidateSet('vanilla', 'thermal', 'thermal80', 'enderio')]
     [string[]]$BenchmarkLayers = @('vanilla', 'thermal', 'enderio'),
 
     [switch]$DryRun,
@@ -1096,10 +1096,14 @@ $summaryLines.Add('| Candidate | Layer | Source | Jar SHA256 | Status | Duration
 $summaryLines.Add('|---|---|---|---:|---|---:|---|')
 $summaryRecords = @()
 
-$thermalStatus = if ($SkipThermalEnvironmentProbe) { 'skipped' } else { 'pending' }
-$thermalDetail = if ($SkipThermalEnvironmentProbe) { 'probe skipped by request' } else { '' }
-$probeStatus = if ($SkipEnderIoEnvironmentProbe) { 'skipped' } else { 'pending' }
-$probeDetail = if ($SkipEnderIoEnvironmentProbe) { 'probe skipped by request' } else { '' }
+$thermalStatus = if ($SkipThermalEnvironmentProbe) { 'available' } else { 'pending' }
+$thermalDetail = if ($SkipThermalEnvironmentProbe) {
+    'probe skipped by request; availability assumed'
+} else { '' }
+$probeStatus = if ($SkipEnderIoEnvironmentProbe) { 'available' } else { 'pending' }
+$probeDetail = if ($SkipEnderIoEnvironmentProbe) {
+    'probe skipped by request; availability assumed'
+} else { '' }
 
 if (-not $SkipThermalEnvironmentProbe) {
     Write-Status 'Running isolated Thermal Expansion/CodeChickenLib CatRoom startup probe'
@@ -1264,9 +1268,9 @@ foreach ($layerName in $BenchmarkLayers) {
             Detail = ''
             ModJars = @()
         }
-    } elseif ($layerName -eq 'thermal') {
+    } elseif ($layerName -eq 'thermal' -or $layerName -eq 'thermal80') {
         $layerRows += [pscustomobject]@{
-            Label = 'thermal'
+            Label = $layerName
             Status = $thermalStatus
             Detail = $thermalDetail
             ModJars = @($ThermalProbeModJars)

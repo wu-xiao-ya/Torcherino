@@ -26,7 +26,8 @@ public final class BenchmarkCommand extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/torcherino-bench <run furnace-suite [all|vanilla|thermal|enderio]"
+        return "/torcherino-bench <run furnace-suite "
+            + "[all|vanilla|thermal|thermal80|enderio]"
             + "|status|export [path]>";
     }
 
@@ -79,6 +80,7 @@ public final class BenchmarkCommand extends CommandBase {
                 "all",
                 "vanilla",
                 "thermal",
+                "thermal80",
                 "enderio"
             );
         }
@@ -88,7 +90,8 @@ public final class BenchmarkCommand extends CommandBase {
     private void run(ICommandSender sender, String[] args) throws CommandException {
         if (args.length < 2 || !"furnace-suite".equalsIgnoreCase(args[1])) {
             throw new CommandException(
-                "/torcherino-bench run furnace-suite [all|vanilla|thermal|enderio]"
+                "/torcherino-bench run furnace-suite "
+                    + "[all|vanilla|thermal|thermal80|enderio]"
             );
         }
         String layer = args.length >= 3 ? args[2] : "all";
