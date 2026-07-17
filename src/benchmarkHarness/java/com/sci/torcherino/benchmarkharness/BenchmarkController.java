@@ -44,12 +44,22 @@ public final class BenchmarkController {
     }
 
     public synchronized RunRequestResult startFurnaceSuite() {
-        return startFurnaceSuite("all");
+        return startFurnaceSuite("all", "diagnostic");
     }
 
     public synchronized RunRequestResult startFurnaceSuite(String layer) {
+        return startFurnaceSuite(layer, "diagnostic");
+    }
+
+    public synchronized RunRequestResult startFurnaceSuite(String layer, String mode) {
         if (session != null && !session.isFinished()) {
             return RunRequestResult.rejected("A benchmark run is already active");
+        }
+        String selectedMode = mode == null
+            ? "diagnostic"
+            : mode.toLowerCase(Locale.ROOT);
+        if (!"diagnostic".equals(selectedMode) && !"timing".equals(selectedMode)) {
+            return RunRequestResult.rejected("Unknown benchmark mode: " + mode);
         }
         final FurnaceSuite suite;
         try {
@@ -57,9 +67,10 @@ public final class BenchmarkController {
         } catch (IllegalArgumentException failure) {
             return RunRequestResult.rejected(failure.getMessage());
         }
-        session = new Session(suite);
+        session = new Session(suite, "diagnostic".equals(selectedMode));
         return RunRequestResult.accepted(
-            "Torcherino benchmark queued: furnace-suite " + layer + ". "
+            "Torcherino benchmark queued: furnace-suite " + layer
+                + " mode=" + selectedMode + ". "
                 + "Use /torcherino-bench status for progress."
         );
     }
@@ -235,6 +246,7 @@ public final class BenchmarkController {
         private final List<BenchmarkReport.SampleResult> samples =
             new ArrayList<BenchmarkReport.SampleResult>();
         private final TickWindow tickWindow = new TickWindow();
+        private final boolean profilerEnabled;
 
         private BenchmarkSuite.Scenario currentScenario;
         private WorldArena arena;
@@ -260,13 +272,14 @@ public final class BenchmarkController {
         private long lastServerTickNanos = -1L;
         private long lastWorldTickNanos = -1L;
 
-        private Session(BenchmarkSuite suite) {
+        private Session(BenchmarkSuite suite, boolean profilerEnabled) {
             this.suite = suite;
+            this.profilerEnabled = profilerEnabled;
             this.scenarios = suite.getScenarios();
             this.currentScenario = scenarios.get(0);
             this.warmupRemaining = suite.getWarmupTicks();
             this.measuredRemaining = suite.getSampleTicks();
-            this.profiler = ProfilerBridge.discover();
+            this.profiler = profilerEnabled ? ProfilerBridge.discover() : null;
         }
 
         private boolean isFinished() {
@@ -406,7 +419,9 @@ public final class BenchmarkController {
                     "Torcherino benchmark first tick scenario={} plans={} profiler={}",
                     currentScenario.getId(),
                     ProfilerBridge.describePlans(),
-                    profiler == null
+                    !profilerEnabled
+                        ? Collections.singletonList("disabled-for-timing")
+                        : profiler == null
                         ? Collections.emptyList()
                         : profiler.snapshot()
                 );
@@ -461,8 +476,12 @@ public final class BenchmarkController {
                 lastWorldTickNanos = -1L;
                 samples.clear();
                 tickWindow.reset();
-                profiler = ProfilerBridge.discover();
-                profiler.start();
+                if (profilerEnabled) {
+                    profiler = ProfilerBridge.discover();
+                    profiler.start();
+                } else {
+                    profiler = null;
+                }
             } catch (BenchmarkEnvironmentException failure) {
                 blockCurrentScenario(failure.getMessage());
             } catch (Throwable failure) {
@@ -560,7 +579,8 @@ public final class BenchmarkController {
             String detail
         ) {
             List<java.util.Map<String, Object>> profilerSnapshot =
-                profiler == null ? Collections.<java.util.Map<String, Object>>emptyList()
+                !profilerEnabled || profiler == null
+                    ? Collections.<java.util.Map<String, Object>>emptyList()
                     : profiler.snapshot();
             return new BenchmarkReport.ScenarioResult(
                 currentScenario.getId(),
@@ -576,8 +596,12 @@ public final class BenchmarkController {
                 sceneRestoreNanos,
                 status,
                 detail,
-                profiler == null ? "unavailable" : profiler.getStatus(),
-                profiler == null ? "not-started" : profiler.getDetail(),
+                !profilerEnabled
+                    ? "disabled-timing"
+                    : profiler == null ? "unavailable" : profiler.getStatus(),
+                !profilerEnabled
+                    ? "profiler disabled for comparable server-tick timing"
+                    : profiler == null ? "not-started" : profiler.getDetail(),
                 profilerSnapshot,
                 new ArrayList<BenchmarkReport.SampleResult>(samples)
             );

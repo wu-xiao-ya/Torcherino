@@ -27,7 +27,7 @@ public final class BenchmarkCommand extends CommandBase {
     @Override
     public String getUsage(ICommandSender sender) {
         return "/torcherino-bench <run furnace-suite "
-            + "[all|vanilla|thermal|thermal80|enderio]"
+            + "[all|vanilla|thermal|thermal80|enderio] [diagnostic|timing]"
             + "|status|export [path]>";
     }
 
@@ -84,6 +84,11 @@ public final class BenchmarkCommand extends CommandBase {
                 "enderio"
             );
         }
+        if (args.length == 4
+            && "run".equalsIgnoreCase(args[0])
+            && "furnace-suite".equalsIgnoreCase(args[1])) {
+            return getListOfStringsMatchingLastWord(args, "diagnostic", "timing");
+        }
         return Collections.emptyList();
     }
 
@@ -91,11 +96,14 @@ public final class BenchmarkCommand extends CommandBase {
         if (args.length < 2 || !"furnace-suite".equalsIgnoreCase(args[1])) {
             throw new CommandException(
                 "/torcherino-bench run furnace-suite "
-                    + "[all|vanilla|thermal|thermal80|enderio]"
+                    + "[all|vanilla|thermal|thermal80|enderio] "
+                    + "[diagnostic|timing]"
             );
         }
         String layer = args.length >= 3 ? args[2] : "all";
-        BenchmarkController.RunRequestResult result = controller.startFurnaceSuite(layer);
+        String mode = args.length >= 4 ? args[3] : "diagnostic";
+        BenchmarkController.RunRequestResult result =
+            controller.startFurnaceSuite(layer, mode);
         send(sender, result.getMessage());
     }
 

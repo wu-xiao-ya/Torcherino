@@ -64,7 +64,13 @@ each scenario. It accepts an optional layer selector:
 /torcherino-bench run furnace-suite thermal
 /torcherino-bench run furnace-suite thermal80
 /torcherino-bench run furnace-suite enderio
+/torcherino-bench run furnace-suite thermal80 timing
 ```
+
+`diagnostic` is the default mode and enables the current Torcherino profiler
+when available. `timing` keeps the profiler disabled for all candidates so
+server-tick comparisons with Torcherino 7.6 do not include current-only
+diagnostic bookkeeping.
 
 The matrix contains:
 
@@ -249,12 +255,44 @@ x324 run contains a roughly 49 ms P99 outlier, so the P50 comparison is the
 stable result; additional process-level repetitions are required for a strong
 tail-latency claim.
 
+### Profiler-Off Timing Comparison
+
+The fair cross-version timing pass disables the profiler for every candidate.
+All exported scenarios report `profilerStatus=disabled-timing` and an empty
+profiler snapshot:
+
+```text
+20260717-192812-torcherino-7.6-thermal80/
+20260717-192851-alpha.6-current-thermal80/
+20260717-192930-c8bcaae-scheduler-baseline-thermal80/
+```
+
+| Multiplier | 7.6 active P50 ms | Scheduler P50 ms | Current P50 ms | Current versus 7.6 |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.493 | 1.932 | 1.524 | 2.1% slower |
+| 4 | 1.393 | 1.626 | 1.463 | 5.0% slower |
+| 36 | 1.544 | 1.510 | 1.440 | 6.7% faster per active tick |
+| 324 | 1.990 | 2.194 | 1.971 | approximately equal |
+
+Disabling the profiler reduces the apparent low-multiplier regression: the x1
+gap falls from 6.3% to 2.1%, and x4 falls from 7.0% to 5.0%. The remaining x4
+cost is the centralized scheduler's fixed target-dispatch overhead. The
+adapter is still useful relative to the same scheduler architecture: current
+x4 is about 10.0% faster than the adapter-free scheduler baseline.
+
+Torcherino 7.6 performs only 5 active samples at x36 and x324 in this run.
+Current processes every sample, resulting in 19.53x the x36 work and 19.95x the
+x324 work. At x324, 7.6 emits 800 items and current emits 16,000. Thus the
+profiler-off result no longer supports a large per-active-tick CPU claim against
+7.6 at x324; the verified gain is reliable every-tick dispatch and 20x effective
+throughput, plus about 10% lower P50 than the scheduler-only fallback.
+
 Current artifacts:
 
 ```text
 B8F059575DEA76A9CEA2D721849A076E29937D18EC2F3FB77B873ADA6B0128C4
 build/libs/torcherino-8.0.0-alpha.6.jar
 
-1B8BC1E8188FFFDACB574FDFE7095B988FEF153C8CA4103815369005273FC874
+05AB93F803C6E08A7DE486D12800C5BA1B18CB6D73F9BEADA02B9CCDE35F9B42
 build/libs/torcherino-benchmark-harness-8.0.0-alpha.6.jar
 ```

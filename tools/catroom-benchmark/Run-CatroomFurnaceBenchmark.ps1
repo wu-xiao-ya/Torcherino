@@ -96,6 +96,10 @@ param(
     [ValidateSet('vanilla', 'thermal', 'thermal80', 'enderio')]
     [string[]]$BenchmarkLayers = @('vanilla', 'thermal', 'enderio'),
 
+    [Parameter()]
+    [ValidateSet('diagnostic', 'timing')]
+    [string]$BenchmarkMode = 'diagnostic',
+
     [switch]$DryRun,
 
     [switch]$Preflight,
@@ -999,6 +1003,7 @@ $planLines.Add('| Current alpha.6 jar | ' + $CurrentJar + ' |')
 $planLines.Add('| Harness jar | ' + $HarnessJar + ' |')
 $planLines.Add('| Target mods root | ' + $TargetModsRoot + ' |')
 $planLines.Add('| Benchmark layers | ' + ($BenchmarkLayers -join ', ') + ' |')
+$planLines.Add('| Benchmark mode | ' + $BenchmarkMode + ' |')
 $planLines.Add('| Ender IO environment probe | ' + ($(if ($SkipEnderIoEnvironmentProbe) { 'skipped' } else { $EnderIoProbeModJars -join ', ' })) + ' |')
 $planLines.Add('| Thermal environment probe | ' + ($(if ($SkipThermalEnvironmentProbe) { 'skipped' } else { $ThermalProbeModJars -join ', ' })) + ' |')
 $includePathsText = if ($allSupportPaths.Count -gt 0) { $allSupportPaths -join ', ' } else { '(none)' }
@@ -1316,7 +1321,7 @@ foreach ($candidate in $candidates) {
 
         $runCommandList = if ($configuredRunCommands.Count -eq 1 -and
             $configuredRunCommands[0] -eq 'torcherino-bench run furnace-suite') {
-            @('torcherino-bench run furnace-suite ' + $layer.Label)
+            @("torcherino-bench run furnace-suite $($layer.Label) $BenchmarkMode")
         } else {
             @($configuredRunCommands)
         }
@@ -1403,6 +1408,7 @@ foreach ($candidate in $candidates) {
                 outputRoot             = $OutputRoot
                 runRoot                = $runRoot
                 runCommands            = $runCommandList
+                benchmarkMode          = $BenchmarkMode
                 exportCommands         = $exportCommandList
                 completionPattern      = $CompletionPattern
                 startedAt              = $startedAt.ToString('o')
@@ -1470,6 +1476,7 @@ foreach ($candidate in $candidates) {
                 serverRoot = $BenchmarkServerRoot
                 outputRoot = $OutputRoot
                 runRoot = $runRoot
+                benchmarkMode = $BenchmarkMode
                 startedAt = $startedAt.ToString('o')
                 finishedAt = (Get-Date).ToString('o')
                 durationSeconds = $duration
