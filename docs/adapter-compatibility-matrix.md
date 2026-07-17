@@ -8,9 +8,9 @@ faster path equivalent.
 |---|---|---|---|
 | Thermal Expansion | `EXACT_FAST_LOOP` where `cofh.api.core.IAccelerable` is present | Cached `MethodHandle` calls the public `updateAccelerable()` contract | Devices, dynamos, cells, unknown signatures, and machines outside the public contract |
 | Ender IO CEu 5.4.2 | `EXACT_FAST_LOOP` for verified PoweredTask bases | Calls the original protected `processTasks(boolean)` path without repeating whole-machine passive loss, automatic IO, or sync | Conduits, obelisks, teleportation, spawners, entity interaction, other versions, and unknown signatures |
-| Mekanism | `LEGACY_FALLBACK` | None yet | Networks, miners, reactors, turbines, boilers, induction systems, multiblocks, and all unverified processing layouts |
-| Actually Additions | `LEGACY_FALLBACK` | None yet | Laser relays, farmers, miners, breakers, placers, fishing, reconstructors, and all unverified processing layouts |
-| IC2 Experimental | `LEGACY_FALLBACK` | None yet | Energy net, cables, reactors, crops, miners, teleporters, personal machines, and all unverified processing components |
+| Mekanism CE Unofficial 10.0.1.455 | `BLACKLIST` for `TileEntityRestrictedTick` | None; repeated full updates are rejected by the mod's same-world-tick guard and processing uses its asynchronous task executor | All restricted-tick tiles; no guard reset, task-executor bypass, or target-jar patching |
+| Actually Additions r152 | `LEGACY_FALLBACK` for audited processing machines | None; Grinder, Double Furnace, Canola Press, and Fermenting Barrel have no isolated processing entry point | Their `updateEntity()` path also invokes neighboring energy or fluid sharing; world-interacting machines remain fallback |
+| IC2 Experimental 2.8.188-ex112 | `LEGACY_FALLBACK` for audited standard machines | None; `TileEntityStandardMachine.updateEntityServer()` also calls `upgradeSlot.tickNoMark()` | Ejector and pulling upgrades can touch neighboring inventories, so the protected method is not an isolated processing entry point; energy net, cables, reactors, crops, miners, teleporters, and personal machines remain fallback |
 
 The runtime probe reports the loaded mod version and a short SHA-256 structural
 signature for the first recognized base class. Unknown signatures are never

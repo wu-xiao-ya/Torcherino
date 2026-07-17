@@ -34,6 +34,16 @@ Thermal Expansion uses its public `IAccelerable` entry point. Ender IO CEu
 repeating whole-machine passive energy loss, network sync, or automatic IO for
 every virtual tick. Other Ender IO versions fail closed to the legacy path.
 
+Mekanism CE Unofficial 10.0.1.455 deliberately rejects repeated `update()` calls
+in the same world tick and schedules processing through its own task executor.
+Torcherino therefore blacklists its restricted-tick tiles instead of issuing
+hundreds of ineffective or potentially concurrent calls. Actually Additions
+r152 processing machines remain on the legacy path because their processing
+entry point also performs neighboring energy or fluid sharing. IC2 Experimental
+2.8.188 standard machines also remain on the legacy path: their protected server
+update ticks upgrade items, and ejector or pulling upgrades can operate on
+neighboring inventories once per invocation.
+
 ## Administration
 
 - `/torcherino adapters` shows adapter availability and structural signatures.

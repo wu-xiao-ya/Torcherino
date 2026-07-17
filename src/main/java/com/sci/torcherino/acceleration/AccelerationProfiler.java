@@ -62,6 +62,31 @@ public final class AccelerationProfiler {
         value.nanos.add(nanos);
     }
 
+    public void recordBlacklisted(
+        String tileClass,
+        String adapterId,
+        int skippedTicks,
+        long nanos
+    ) {
+        if (!enabled) {
+            return;
+        }
+        String key = adapterId + "|" + tileClass;
+        MutableStats value = stats.get(key);
+        if (value == null) {
+            MutableStats created = new MutableStats(
+                adapterId,
+                tileClass,
+                AdapterClassification.BLACKLIST
+            );
+            MutableStats raced = stats.putIfAbsent(key, created);
+            value = raced == null ? created : raced;
+        }
+        value.calls.increment();
+        value.skippedTicks.add(skippedTicks);
+        value.nanos.add(nanos);
+    }
+
     public List<Map<String, Object>> snapshot(int limit) {
         List<MutableStats> values = new ArrayList<MutableStats>(stats.values());
         Collections.sort(values, new Comparator<MutableStats>() {
@@ -82,6 +107,7 @@ public final class AccelerationProfiler {
             row.put("calls", value.calls.sum());
             row.put("virtualTicks", value.virtualTicks.sum());
             row.put("fallbackTicks", value.fallbackTicks.sum());
+            row.put("skippedTicks", value.skippedTicks.sum());
             row.put("millis", value.nanos.sum() / 1_000_000.0D);
             result.add(row);
         }
@@ -95,6 +121,7 @@ public final class AccelerationProfiler {
         private final LongAdder calls = new LongAdder();
         private final LongAdder virtualTicks = new LongAdder();
         private final LongAdder fallbackTicks = new LongAdder();
+        private final LongAdder skippedTicks = new LongAdder();
         private final LongAdder nanos = new LongAdder();
 
         private MutableStats(

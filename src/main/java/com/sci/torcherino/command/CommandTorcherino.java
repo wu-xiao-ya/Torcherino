@@ -4,6 +4,7 @@ import com.sci.torcherino.acceleration.AccelerationProfiler;
 import com.sci.torcherino.acceleration.AccelerationService;
 import com.sci.torcherino.acceleration.AdapterRegistry;
 import com.sci.torcherino.acceleration.AdapterReport;
+import com.sci.torcherino.api.AdapterClassification;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.CommandException;
 import net.minecraft.command.ICommandSender;
@@ -77,11 +78,30 @@ public final class CommandTorcherino extends CommandBase {
                 sender,
                 report.getId()
                     + " [" + report.getClassification() + "] "
-                    + (report.isEnabled() ? "enabled" : "disabled")
+                    + adapterStatus(report)
                     + " " + report.getSignature()
                     + " - " + report.getDetail()
             );
         }
+    }
+
+    private static String adapterStatus(AdapterReport report) {
+        String detail = report.getDetail();
+        int separator = detail.indexOf(':');
+        String reason = separator < 0 ? detail : detail.substring(0, separator);
+        if (reason.startsWith("unsupported-") || "signature-mismatch".equals(reason)) {
+            return reason;
+        }
+        if (!report.isEnabled()) {
+            return "disabled";
+        }
+        if (report.getClassification() == AdapterClassification.BLACKLIST) {
+            return "blocked";
+        }
+        if (report.getClassification() == AdapterClassification.LEGACY_FALLBACK) {
+            return "audited-fallback";
+        }
+        return "enabled";
     }
 
     private static void showPlans(ICommandSender sender) {

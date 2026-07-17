@@ -174,6 +174,12 @@ public final class WorldAccelerationManager {
             long adapterStart = System.nanoTime();
             AdapterDispatch dispatch = AdapterRegistry.getInstance().dispatch(tile, multiplier, context);
             if (dispatch.isBlacklisted()) {
+                AccelerationProfiler.getInstance().recordBlacklisted(
+                    tile.getClass().getName(),
+                    dispatch.getAdapterId(),
+                    multiplier,
+                    System.nanoTime() - adapterStart
+                );
                 return;
             }
 
