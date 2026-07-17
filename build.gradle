@@ -53,6 +53,13 @@ configurations {
     runtimeOnly.extendsFrom(modRuntimeOnly)
 }
 
+sourceSets {
+    benchmarkHarness {
+        compileClasspath += sourceSets.main.compileClasspath
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
 unimined.minecraft {
     version '1.12.2'
 
@@ -73,6 +80,12 @@ unimined.minecraft {
     }
 }
 
+unimined.minecraft(sourceSets.benchmarkHarness) {
+    from sourceSets.main
+    defaultRemapJar = true
+    defaultRemapSourcesJar = false
+}
+
 dependencies {
     compileOnly "com.cleanroommc:sponge-mixin:${mixin_version}"
 
@@ -83,6 +96,18 @@ dependencies {
 }
 
 processResources {
+    inputs.property 'version', project.version
+    inputs.property 'mcversion', '1.12.2'
+
+    filesMatching('mcmod.info') {
+        expand(
+            version: project.version,
+            mcversion: '1.12.2'
+        )
+    }
+}
+
+tasks.named('processBenchmarkHarnessResources') {
     inputs.property 'version', project.version
     inputs.property 'mcversion', '1.12.2'
 
@@ -130,6 +155,21 @@ tasks.named('remapJar') {
     archiveClassifier = ''
 }
 
+tasks.named('benchmarkHarnessJar') {
+    archiveBaseName = 'torcherino-benchmark-harness'
+    archiveClassifier = 'dev'
+    manifest {
+        attributes(
+            'ForceLoadAsMod': 'true'
+        )
+    }
+}
+
+tasks.named('remapBenchmarkHarnessJar') {
+    archiveBaseName = 'torcherino-benchmark-harness'
+    archiveClassifier = ''
+}
+
 tasks.register('verifyPublishedJarManifest') {
     dependsOn tasks.named('remapJar')
 
@@ -159,6 +199,31 @@ tasks.register('verifyPublishedJarManifest') {
     }
 }
 
+tasks.register('verifyBenchmarkHarnessJar') {
+    dependsOn tasks.named('remapBenchmarkHarnessJar')
+
+    doLast {
+        def harnessJar = tasks.named('remapBenchmarkHarnessJar').get().archiveFile.get().asFile
+        def jarFile = new java.util.jar.JarFile(harnessJar)
+        try {
+            def attributes = jarFile.manifest.mainAttributes
+            if (!'true'.equalsIgnoreCase(attributes.getValue('ForceLoadAsMod'))) {
+                throw new GradleException(
+                    "Benchmark harness must declare ForceLoadAsMod: true for CatRoom discovery"
+                )
+            }
+            if (jarFile.getEntry('com/sci/torcherino/Torcherino.class') != null) {
+                throw new GradleException(
+                    "Benchmark harness must not contain Torcherino production classes"
+                )
+            }
+        } finally {
+            jarFile.close()
+        }
+    }
+}
+
 build.dependsOn tasks.named('remapJar')
 build.dependsOn tasks.named('schedulerBenchmark')
 build.dependsOn tasks.named('verifyPublishedJarManifest')
+build.dependsOn tasks.named('verifyBenchmarkHarnessJar')
