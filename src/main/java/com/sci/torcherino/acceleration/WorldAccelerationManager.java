@@ -35,14 +35,19 @@ public final class WorldAccelerationManager {
         new Long2ObjectOpenHashMap<TargetExecutionContext>();
     private final ArrayDeque<Runnable> deferredChanges = new ArrayDeque<Runnable>();
     private final CoverageMailbox mailbox = new CoverageMailbox();
+    private final DiscoveryCadence discoveryCadence = new DiscoveryCadence();
     private final Random random = new Random();
 
     private Long2IntOpenHashMap coverage = new Long2IntOpenHashMap();
     private TargetExecutionContext[] traversalTargets =
         new TargetExecutionContext[0];
     private int[] traversalMultipliers = new int[0];
+    private TargetExecutionContext[] discoveredTargets =
+        new TargetExecutionContext[0];
+    private int[] discoveredMultipliers = new int[0];
     private long revision;
     private long appliedPlanRevision;
+    private long discoveryScans;
     private boolean ticking;
 
     WorldAccelerationManager(long managerId, WorldServer world) {
@@ -91,11 +96,10 @@ public final class WorldAccelerationManager {
         long managerStart = System.nanoTime();
         ticking = true;
         try {
-            TargetExecutionContext[] targets = traversalTargets;
-            int[] multipliers = traversalMultipliers;
-            for (int i = 0; i < targets.length; i++) {
-                tickTarget(targets[i], multipliers[i]);
+            if (discoveryCadence.beginTick(Torcherino.discoveryIntervalTicks)) {
+                discoverTargets();
             }
+            executeDiscoveredTargets();
         } finally {
             ticking = false;
             while (!deferredChanges.isEmpty()) {
@@ -130,6 +134,18 @@ public final class WorldAccelerationManager {
         return appliedPlanRevision;
     }
 
+    public int getDiscoveredTargetCount() {
+        return discoveredTargets.length;
+    }
+
+    public long getDiscoveryScans() {
+        return discoveryScans;
+    }
+
+    public int getTicksUntilDiscovery() {
+        return discoveryCadence.getTicksUntilDiscovery();
+    }
+
     void close() {
         mailbox.close();
         torches.clear();
@@ -140,9 +156,134 @@ public final class WorldAccelerationManager {
         targetContexts.clear();
         traversalTargets = new TargetExecutionContext[0];
         traversalMultipliers = new int[0];
+        discoveredTargets = new TargetExecutionContext[0];
+        discoveredMultipliers = new int[0];
     }
 
-    private void tickTarget(TargetExecutionContext cachedContext, int multiplier) {
+    private void discoverTargets() {
+        TargetExecutionContext[] coverageTargets = traversalTargets;
+        int[] coverageMultipliers = traversalMultipliers;
+        TargetExecutionContext[] foundTargets =
+            new TargetExecutionContext[coverageTargets.length];
+        int[] foundMultipliers = new int[coverageTargets.length];
+        int found = 0;
+        AccelerationProfiler profiler = AccelerationProfiler.getInstance();
+        boolean profiling = profiler.isEnabled();
+        for (int i = 0; i < coverageTargets.length; i++) {
+            TargetExecutionContext context = coverageTargets[i];
+            int multiplier = coverageMultipliers[i];
+            long scanStart = profiling ? System.nanoTime() : 0L;
+            if (isDiscoverableTarget(
+                context,
+                multiplier,
+                profiler,
+                profiling,
+                scanStart
+            )) {
+                foundTargets[found] = context;
+                foundMultipliers[found] = multiplier;
+                found++;
+            } else {
+                context.clearRoute();
+            }
+        }
+        discoveredTargets = found == foundTargets.length
+            ? foundTargets
+            : java.util.Arrays.copyOf(foundTargets, found);
+        discoveredMultipliers = found == foundMultipliers.length
+            ? foundMultipliers
+            : java.util.Arrays.copyOf(foundMultipliers, found);
+        discoveryScans++;
+    }
+
+    private boolean isDiscoverableTarget(
+        TargetExecutionContext cachedContext,
+        int multiplier,
+        AccelerationProfiler profiler,
+        boolean profiling,
+        long scanStart
+    ) {
+        BlockPos pos = cachedContext.pos;
+        if (!world.isBlockLoaded(pos, false)) {
+            recordSkipped(
+                profiler,
+                profiling,
+                "unloaded",
+                "unknown",
+                multiplier,
+                scanStart
+            );
+            return false;
+        }
+        IBlockState state = world.getBlockState(pos);
+        cachedContext.updateBlockState(state);
+        Block block = cachedContext.block;
+        if (cachedContext.blockBlacklisted) {
+            recordSkipped(
+                profiler,
+                profiling,
+                "block-blacklisted",
+                block.getClass().getName(),
+                multiplier,
+                scanStart
+            );
+            return false;
+        }
+        if (cachedContext.randomTick) {
+            return true;
+        }
+        if (!cachedContext.hasTileEntity) {
+            recordSkipped(
+                profiler,
+                profiling,
+                "no-tile",
+                block.getClass().getName(),
+                multiplier,
+                scanStart
+            );
+            return false;
+        }
+        TileEntity tile = world.getTileEntity(pos);
+        return isExecutableTile(
+            profiler,
+            profiling,
+            tile,
+            block,
+            multiplier,
+            scanStart
+        );
+    }
+
+    private void executeDiscoveredTargets() {
+        TargetExecutionContext[] targets = discoveredTargets;
+        int[] multipliers = discoveredMultipliers;
+        int retained = 0;
+        boolean removed = false;
+        for (int i = 0; i < targets.length; i++) {
+            TargetExecutionContext context = targets[i];
+            int multiplier = multipliers[i];
+            if (tickTarget(context, multiplier)) {
+                if (removed) {
+                    targets[retained] = context;
+                    multipliers[retained] = multiplier;
+                }
+                retained++;
+            } else {
+                removed = true;
+                context.clearRoute();
+            }
+        }
+        if (removed) {
+            discoveredTargets = java.util.Arrays.copyOf(targets, retained);
+            discoveredMultipliers =
+                java.util.Arrays.copyOf(multipliers, retained);
+        }
+    }
+
+    private boolean tickTarget(
+        TargetExecutionContext cachedContext,
+        int multiplier
+    ) {
         long packedPos = cachedContext.packedPos;
         BlockPos pos = cachedContext.pos;
         AccelerationProfiler profiler = AccelerationProfiler.getInstance();
@@ -158,7 +299,7 @@ public final class WorldAccelerationManager {
                 multiplier,
                 scanStart
             );
-            return;
+            return false;
         }
 
         IBlockState state = world.getBlockState(pos);
@@ -174,7 +315,7 @@ public final class WorldAccelerationManager {
                 multiplier,
                 scanStart
             );
-            return;
+            return false;
         }
 
         boolean randomTick = cachedContext.randomTick;
@@ -190,7 +331,7 @@ public final class WorldAccelerationManager {
                     multiplier,
                     scanStart
                 );
-                return;
+                return false;
             }
             tile = world.getTileEntity(pos);
             if (!isExecutableTile(
@@ -202,12 +343,12 @@ public final class WorldAccelerationManager {
                 scanStart
             )) {
                 cachedContext.clearRoute();
-                return;
+                return false;
             }
         }
 
         if (!activeTargets.add(packedPos)) {
-            return;
+            return true;
         }
         long targetStart = System.nanoTime();
         try {
@@ -226,7 +367,7 @@ public final class WorldAccelerationManager {
                         multiplier,
                         scanStart
                     );
-                    return;
+                    return cachedContext.randomTick;
                 }
                 tile = world.getTileEntity(pos);
                 if (!isExecutableTile(
@@ -238,7 +379,7 @@ public final class WorldAccelerationManager {
                     scanStart
                 )) {
                     cachedContext.clearRoute();
-                    return;
+                    return cachedContext.randomTick;
                 }
             }
 
@@ -261,7 +402,7 @@ public final class WorldAccelerationManager {
                         System.nanoTime() - adapterStart
                     );
                 }
-                return;
+                return true;
             }
 
             AdvanceResult result = dispatch.getResult();
@@ -295,6 +436,7 @@ public final class WorldAccelerationManager {
                     System.nanoTime() - adapterStart
                 );
             }
+            return !result.isInvalidated() && !tile.isInvalid();
         } finally {
             activeTargets.remove(packedPos);
             warnSlowTarget(packedPos, pos, System.nanoTime() - targetStart);
@@ -430,6 +572,7 @@ public final class WorldAccelerationManager {
     private void changed() {
         revision++;
         rebuildTraversal();
+        discoveryCadence.force();
         CoverageSnapshot snapshot = new CoverageSnapshot(
             managerId,
             world.provider.getDimension(),
@@ -463,6 +606,7 @@ public final class WorldAccelerationManager {
         plannedCoverage.defaultReturnValue(0);
         coverage = plannedCoverage;
         rebuildTraversal();
+        discoveryCadence.force();
         appliedPlanRevision = plan.getRevision();
     }
 

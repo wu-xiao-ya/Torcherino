@@ -390,3 +390,31 @@ build/libs/torcherino-8.0.0-alpha.6.jar
 05AB93F803C6E08A7DE486D12800C5BA1B18CB6D73F9BEADA02B9CCDE35F9B42
 build/libs/torcherino-benchmark-harness-8.0.0-alpha.6.jar
 ```
+
+### Discovery-Interval Sparse Follow-up
+
+The discovery-interval branch adds a `thermal1` layer containing one active
+Thermal Redstone Furnace inside one maximum-range Torcherino coverage volume.
+The other 242 covered positions are empty. This isolates the cost of checking
+empty positions from the cost of executing a dense machine array.
+
+Run the same current jar twice in timing mode, changing only
+`discoveryIntervalTicks` between `1` and `20`:
+
+```powershell
+.\tools\catroom-benchmark\Run-CatroomFurnaceBenchmark.ps1 `
+  -JavaHome 'C:\Users\zpyn1\Downloads\zulu21-win_x64' `
+  -Candidate current `
+  -BenchmarkLayers thermal1 `
+  -BenchmarkMode timing `
+  -SkipEnderIoEnvironmentProbe `
+  -SkipThermalEnvironmentProbe `
+  -ServerPort 25566 `
+  -RconPort 25576
+```
+
+The interval does not delay removal safety. Cached targets are validated every
+server tick and are discarded immediately when their block, TileEntity,
+loaded-chunk state, blacklist status, or adapter execution becomes invalid.
+Only discovery of a newly placed target in a previously empty covered position
+can wait for the next full scan.

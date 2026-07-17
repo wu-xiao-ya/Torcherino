@@ -57,6 +57,9 @@ public final class AccelerationService {
                 "dim=" + entry.getKey().provider.getDimension()
                     + " torches=" + manager.getTorchCount()
                     + " positions=" + manager.getCoveredPositionCount()
+                    + " targets=" + manager.getDiscoveredTargetCount()
+                    + " discoveryIn=" + manager.getTicksUntilDiscovery()
+                    + " discoveryScans=" + manager.getDiscoveryScans()
                     + " revision=" + manager.getRevision()
                     + " applied=" + manager.getAppliedPlanRevision()
             );

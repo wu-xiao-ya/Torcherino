@@ -52,6 +52,7 @@ public class Torcherino {
     public static boolean strictExecution;
     public static boolean asyncPlanner;
     public static boolean loadChunks;
+    public static int discoveryIntervalTicks;
     public static String overlapMode;
     public static String adapterMode;
     public static int slowTargetMillis;
@@ -207,6 +208,14 @@ public class Torcherino {
                 "acceleration",
                 false,
                 "Allow acceleration to load chunks. This implementation always requires loaded chunks."
+            );
+            discoveryIntervalTicks = config.getInt(
+                "discoveryIntervalTicks",
+                "acceleration",
+                20,
+                1,
+                1200,
+                "Full covered-position discovery interval. Cached targets are still validated and accelerated every tick."
             );
             slowTargetMillis = config.getInt(
                 "slowTargetMillis",

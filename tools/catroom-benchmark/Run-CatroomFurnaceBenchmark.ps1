@@ -93,7 +93,7 @@ param(
     [string]$CandidateSelection = 'all',
 
     [Parameter()]
-    [ValidateSet('vanilla', 'thermal', 'thermal80', 'enderio')]
+    [ValidateSet('vanilla', 'thermal1', 'thermal', 'thermal80', 'enderio')]
     [string[]]$BenchmarkLayers = @('vanilla', 'thermal', 'enderio'),
 
     [Parameter()]
@@ -1273,7 +1273,9 @@ foreach ($layerName in $BenchmarkLayers) {
             Detail = ''
             ModJars = @()
         }
-    } elseif ($layerName -eq 'thermal' -or $layerName -eq 'thermal80') {
+    } elseif ($layerName -eq 'thermal1' -or
+        $layerName -eq 'thermal' -or
+        $layerName -eq 'thermal80') {
         $layerRows += [pscustomobject]@{
             Label = $layerName
             Status = $thermalStatus
