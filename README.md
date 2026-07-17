@@ -29,6 +29,11 @@ Actually Additions, and IC2 Experimental. Unknown class signatures and
 world-interacting machines deliberately remain on the exact legacy fallback
 until a differential test proves a faster path equivalent.
 
+Thermal Expansion uses its public `IAccelerable` entry point. Ender IO CEu
+5.4.2 powered-task machines use their original protected task processor without
+repeating whole-machine passive energy loss, network sync, or automatic IO for
+every virtual tick. Other Ender IO versions fail closed to the legacy path.
+
 ## Administration
 
 - `/torcherino adapters` shows adapter availability and structural signatures.

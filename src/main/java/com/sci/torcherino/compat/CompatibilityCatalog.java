@@ -9,6 +9,7 @@ public final class CompatibilityCatalog {
 
     public static void register(AdapterRegistry registry) {
         registry.register(new ThermalAccelerableAdapter());
+        registry.register(new EnderIoPoweredTaskAdapter());
         registerMod(
             registry,
             "thermalexpansion",

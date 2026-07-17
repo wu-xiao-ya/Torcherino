@@ -11,25 +11,32 @@ final class StructuralSignature {
     }
 
     static String firstAvailable(String[] classNames) {
-        ClassLoader loader = StructuralSignature.class.getClassLoader();
         for (String className : classNames) {
-            String resource = className.replace('.', '/') + ".class";
-            InputStream input = loader.getResourceAsStream(resource);
-            if (input == null) {
-                continue;
-            }
-            try {
-                return className + "#" + digest(input);
-            } catch (IOException e) {
-                return className + "#io-error";
-            } finally {
-                try {
-                    input.close();
-                } catch (IOException ignored) {
-                }
+            String digest = digestForClass(className);
+            if (digest != null) {
+                return className + "#" + digest.substring(0, 12);
             }
         }
         return "no-probe-class";
+    }
+
+    static String digestForClass(String className) {
+        ClassLoader loader = StructuralSignature.class.getClassLoader();
+        String resource = className.replace('.', '/') + ".class";
+        InputStream input = loader.getResourceAsStream(resource);
+        if (input == null) {
+            return null;
+        }
+        try {
+            return digest(input);
+        } catch (IOException e) {
+            return "io-error";
+        } finally {
+            try {
+                input.close();
+            } catch (IOException ignored) {
+            }
+        }
     }
 
     private static String digest(InputStream input) throws IOException {
@@ -42,7 +49,7 @@ final class StructuralSignature {
             }
             byte[] hash = digest.digest();
             StringBuilder value = new StringBuilder();
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < hash.length; i++) {
                 value.append(String.format("%02x", hash[i] & 0xFF));
             }
             return value.toString();
