@@ -418,3 +418,34 @@ server tick and are discarded immediately when their block, TileEntity,
 loaded-chunk state, blacklist status, or adapter execution becomes invalid.
 Only discovery of a newly placed target in a previously empty covered position
 can wait for the next full scan.
+
+The CatRoom timing comparison used the same remapped Torcherino jar
+(`E2258D5363529CA96AC78FF6E4C2FD50F82511BAE4CB397A82A9FF7A0F351440`)
+for both runs. Only `discoveryIntervalTicks` changed.
+
+| Multiplier | Interval 1 world P50 ms | Interval 20 world P50 ms | World P50 change | Interval 1 server P50 ms | Interval 20 server P50 ms | Server P50 change | Median world allocation change |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.4312 | 0.3923 | 9.0% lower | 0.7750 | 0.7395 | 4.6% lower | 8.4% lower |
+| 4 | 0.3310 | 0.2965 | 10.4% lower | 0.5768 | 0.5311 | 7.9% lower | 8.6% lower |
+| 36 | 0.2667 | 0.2564 | 3.9% lower | 0.4687 | 0.4461 | 4.8% lower | 8.6% lower |
+| 324 | 0.3041 | 0.2674 | 12.1% lower | 0.4759 | 0.4503 | 5.4% lower | 8.2% lower |
+
+All 800 measured samples restored the same baseline and produced identical
+inventory, energy, progress, and output state signatures. A full discovery
+tick is deliberately more expensive than a cached tick, so sparse P95 can
+include the periodic scan. The optimization targets steady low-load cost and
+allocation rather than hiding that scan.
+
+The removal probe used one configured maximum-range Torcherino and one vanilla
+furnace in a loaded benchmark chunk:
+
+```text
+before removal:             targets=1 discoveryIn=18 discoveryScans=32
+about two server ticks later: targets=0 discoveryIn=14 discoveryScans=32
+replacement before scan:    targets=0 discoveryIn=10 discoveryScans=32
+replacement after scan:     targets=1 discoveryIn=7  discoveryScans=33
+```
+
+This confirms that removal does not wait for the discovery interval. A newly
+placed machine in an empty covered position is intentionally admitted by the
+next discovery scan.
