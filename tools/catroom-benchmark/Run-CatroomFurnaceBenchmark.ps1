@@ -908,6 +908,22 @@ function Assert-InputPath {
 }
 
 $repoRoot = Get-RepoRoot
+$versionProperty = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'gradle.properties'
+) | Where-Object {
+    $_ -match '^\s*mod_version\s*='
+} | Select-Object -First 1
+if (-not $versionProperty) {
+    throw 'gradle.properties does not define mod_version'
+}
+$projectVersion = ($versionProperty -split '=', 2)[1].Trim()
+if (-not $projectVersion) {
+    throw 'gradle.properties defines an empty mod_version'
+}
+$currentCandidateLabel = (
+    $projectVersion -replace '^\d+(?:\.\d+)*-', ''
+) + '-current'
+
 $javaHomeValue = Get-BenchmarkJavaHome -PreferredHome $JavaHome
 $javaExe = Join-Path $javaHomeValue 'bin\java.exe'
 Assert-BenchmarkJava -JavaExe $javaExe
@@ -925,10 +941,14 @@ if (-not $WorktreeRoot) {
     $WorktreeRoot = Join-Path $repoRoot 'cleanroom\worktrees'
 }
 if (-not $CurrentJar) {
-    $CurrentJar = Join-Path $repoRoot 'build\libs\torcherino-8.0.0-alpha.6.jar'
+    $CurrentJar = Join-Path $repoRoot (
+        "build\libs\torcherino-$projectVersion.jar"
+    )
 }
 if (-not $HarnessJar) {
-    $HarnessJar = Join-Path $repoRoot 'build\libs\torcherino-benchmark-harness-8.0.0-alpha.6.jar'
+    $HarnessJar = Join-Path $repoRoot (
+        "build\libs\torcherino-benchmark-harness-$projectVersion.jar"
+    )
 }
 
 $CleanroomInstallerJar = Get-AbsolutePath -Path $CleanroomInstallerJar -Base $repoRoot
@@ -999,7 +1019,7 @@ $planLines.Add('| Java home | ' + $javaHomeValue + ' |')
 $planLines.Add('| Cleanroom installer | ' + $CleanroomInstallerJar + ' |')
 $planLines.Add('| Cleanroom core SHA | ' + $CleanroomCoreSha256.ToUpperInvariant() + ' |')
 $planLines.Add('| Torcherino 7.6 jar | ' + $Torcherino76Jar + ' |')
-$planLines.Add('| Current alpha.6 jar | ' + $CurrentJar + ' |')
+$planLines.Add('| Current ' + $projectVersion + ' jar | ' + $CurrentJar + ' |')
 $planLines.Add('| Harness jar | ' + $HarnessJar + ' |')
 $planLines.Add('| Target mods root | ' + $TargetModsRoot + ' |')
 $planLines.Add('| Benchmark layers | ' + ($BenchmarkLayers -join ', ') + ' |')
@@ -1020,7 +1040,7 @@ if ($DryRun -or $Preflight) {
 }
 
 if ($Preflight) {
-    Assert-InputPath -Path $CurrentJar -Label 'Current alpha.6 jar'
+    Assert-InputPath -Path $CurrentJar -Label "Current $projectVersion jar"
     Assert-InputPath -Path $HarnessJar -Label 'benchmark harness jar'
     foreach ($modJar in $AdditionalModJars) {
         Assert-InputPath -Path $modJar -Label 'benchmark dependency jar'
@@ -1053,7 +1073,7 @@ if ($DryRun) {
 
 $currentJarPath = $CurrentJar
 if (-not (Test-Path -LiteralPath $currentJarPath) -or -not (Test-Path -LiteralPath $HarnessJar)) {
-    Write-Status 'Building current alpha.6 and benchmark harness artifacts'
+    Write-Status "Building current $projectVersion and benchmark harness artifacts"
     $currentJarPath = Invoke-GradleBuild -RepoRootValue $repoRoot -JavaHomeValue $javaHomeValue -BuildHarness
 }
 
@@ -1072,7 +1092,7 @@ $candidateRows = @(
         Jar    = $Torcherino76Jar
     },
     [pscustomobject]@{
-        Label  = 'alpha.6-current'
+        Label  = $currentCandidateLabel
         Source = 'current branch'
         Jar    = $currentJarPath
     }
@@ -1089,7 +1109,7 @@ if ($CandidateSelection -ne 'all') {
     $selectedLabel = switch ($CandidateSelection) {
         '7.6' { 'torcherino-7.6' }
         'scheduler' { 'c8bcaae-scheduler-baseline' }
-        'current' { 'alpha.6-current' }
+        'current' { $currentCandidateLabel }
     }
     $candidates = @($candidates | Where-Object { $_.Label -eq $selectedLabel })
 }

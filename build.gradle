@@ -127,6 +127,7 @@ tasks.withType(JavaCompile).configureEach {
 test {
     useJUnitPlatform()
     classpath += tasks.named('compileJava').get().classpath
+    systemProperty 'torcherino.expectedVersion', project.version.toString()
 }
 
 tasks.named('compileTestJava') {
