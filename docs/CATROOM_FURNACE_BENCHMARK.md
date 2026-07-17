@@ -9,7 +9,7 @@ for this project.
 - Core: `cleanroom/cleanroom-0.1.0.jar`
 - Core SHA-256:
   `DDDF6FE1F26FF9CA6EE70483C5B2B72C653E6FCF1573CEF0E91E3D7AADDF8962`
-- Java: JDK 25
+- Java: JDK 21
 - Server root: `cleanroom/benchmark-server`
 - Reports: `build/reports/torcherino/catroom-furnace-benchmark`
 
@@ -22,7 +22,7 @@ their dependencies.
 Build the production mod and the independent harness:
 
 ```powershell
-& 'C:\Program Files\Eclipse Adoptium\jdk-25.0.3.9-hotspot\bin\java.exe' `
+& 'C:\Users\zpyn1\Downloads\zulu21-win_x64\bin\java.exe' `
   '-Dorg.gradle.appname=gradlew' `
   -classpath '.\gradle\wrapper\gradle-wrapper.jar' `
   org.gradle.wrapper.GradleWrapperMain `
@@ -41,13 +41,17 @@ introduced by the next commit. The runner therefore creates a synthetic,
 adapter-free build closure:
 
 - Scheduler logic marker: `c8bcaae`
+- Current `BlockPos.toLong()` coordinate-layout correction
 - Required API closure: `93a16c9`
 - Modern build infrastructure: `e66d257`
 - Compatibility catalog: generated empty implementation
 
 This candidate is reported as `c8bcaae-scheduler-baseline`. It contains no
 machine adapters. Reports must not describe it as a byte-for-byte build of the
-unbuildable `c8bcaae` commit.
+unbuildable `c8bcaae` commit. The coordinate correction is required because the
+original planner packed `y` and `z` in the wrong bit ranges; without it, planned
+targets decode into unrelated or unloaded chunks and the candidate does not
+exercise machine fallback at all.
 
 ## Scenarios
 
@@ -124,17 +128,68 @@ third-party Jar.
 
 ## Formal Environment Result
 
-The locked CatRoom core cannot currently enter a server world on JDK 25. Forge
-capability initialization fails before Torcherino code runs because the core
-calls the removed `jdk.internal.misc.Unsafe.putObject` method.
+Zulu OpenJDK `21.0.1` starts the locked CatRoom core and Thermal Expansion
+successfully. JDK 17 cannot load the Java 21 bytecode in the core, while JDK 25
+fails during Forge capability initialization because the core calls removed
+`jdk.internal.misc.Unsafe.putObject/getObject` methods. JDK 21 is therefore the
+formal runtime.
 
-The target-mod probes also stop before machine benchmarking:
+Thermal Expansion `5.5.7.1` and CodeChickenLib `3.2.4.1` pass the isolated
+startup probe on JDK 21. Ender IO remains independently blocked: EnderCore
+`0.5.81` fails its transformer under the core's ASM 9.6 with
+`V1_5 or less must use F_NEW frames`. The original Ender IO and EnderCore Jars
+remain unchanged.
 
-- Thermal Expansion requires CodeChickenLib 3.2.4.1, which calls the removed
-  `jdk.internal.misc.Unsafe.getObject` method on this core/JDK combination.
-- EnderCore 0.5.81 fails its transformer under the core's ASM 9.6 with
-  `V1_5 or less must use F_NEW frames`.
+## Verified Results
 
-These are reported as `environment-blocked`, with original Jars and hashes
-preserved. No performance multiplier is emitted for the formal CatRoom
-environment until the locked core/JDK combination can reach normal world ticks.
+Reports created before the `BlockPos.toLong()` coordinate correction are
+invalid for acceleration conclusions because their planner decoded targets into
+unloaded chunks. The first valid current vanilla report is:
+
+```text
+build/reports/torcherino/catroom-furnace-benchmark/
+20260717-172437-alpha.6-current-vanilla/
+```
+
+It records `2,509,056` vanilla-furnace fallback ticks in the x324 array scenario,
+but the 64 furnaces advance by only 64 aggregate progress units. The CatRoom
+configuration has `enableSkipTileEntityTick: false`, so this is not the optional
+global tile-skip setting. In this environment, repeated direct vanilla furnace
+updates in one world tick do not produce matching virtual progress. Vanilla
+timings are therefore diagnostic fallback-cost data, not an acceleration
+speedup result.
+
+The valid Thermal comparison uses:
+
+```text
+20260717-174337-c8bcaae-scheduler-baseline-thermal/
+20260717-174641-alpha.6-current-thermal/
+```
+
+Each scenario has 100 measured samples and restores the same active-machine NBT
+before every sample. All samples report `baselineRestored=true`. The current
+Thermal adapter calls the public CoFH `updateAccelerable()` path for continuous
+progress and invokes the original machine `update()` only at processing
+boundaries or when the fast path cannot consume energy.
+
+| Multiplier | State comparison | Scheduler P50/P95/P99 ms | Current P50/P95/P99 ms |
+| ---: | --- | --- | --- |
+| 1 | energy and progress equal | 0.986 / 1.454 / 1.802 | 0.928 / 1.674 / 2.420 |
+| 4 | energy and progress equal | 0.838 / 2.501 / 48.459 | 0.760 / 1.314 / 2.342 |
+| 36 | energy and progress equal | 0.692 / 0.933 / 1.027 | 0.630 / 0.862 / 0.964 |
+| 324 | energy, progress, and 32 outputs equal | 0.856 / 1.123 / 1.162 | 0.738 / 1.009 / 1.068 |
+
+The 16-machine Thermal array shows a measurable reduction, but not a tenfold
+whole-server improvement: at x324 the current P50 is about 13.8% lower and P95
+about 10.2% lower than the scheduler-only fallback baseline. Larger machine
+arrays are still required before making a production-scale performance claim.
+
+Current artifacts:
+
+```text
+85E75E26FE27DFFFAC7BD5EC302DAAACE502F9D804B08DE225FEBF4A1A66FC25
+build/libs/torcherino-8.0.0-alpha.6.jar
+
+07CC17FD84F058AE66CD6240EC7FFC76F2E79448CE0D753659770536C19B89F2
+build/libs/torcherino-benchmark-harness-8.0.0-alpha.6.jar
+```

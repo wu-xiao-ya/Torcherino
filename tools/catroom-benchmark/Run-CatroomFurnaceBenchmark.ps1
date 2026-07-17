@@ -216,7 +216,7 @@ function Remove-GitWorktreeSafe {
     [void](Invoke-Git -Arguments @('-C', $RepoRootValue, 'worktree', 'prune'))
 }
 
-function Get-Java25Home {
+function Get-BenchmarkJavaHome {
     param([string]$PreferredHome)
 
     if ($PreferredHome) {
@@ -229,15 +229,16 @@ function Get-Java25Home {
     }
 
     $envHome = $env:JAVA_HOME
-    if ($envHome -and $envHome -match '(?i)jdk-25') {
+    if ($envHome) {
         $envJava = Join-Path $envHome 'bin\java.exe'
-        if (Test-Path -LiteralPath $envJava) {
+        if ((Test-Path -LiteralPath $envJava) -and
+            (Get-JavaVersionText -JavaExe $envJava) -match 'version "21\.') {
             return [System.IO.Path]::GetFullPath($envHome)
         }
     }
 
     $knownHomes = Get-ChildItem -LiteralPath 'C:\Program Files\Eclipse Adoptium' -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like 'jdk-25*' } |
+        Where-Object { $_.Name -like 'jdk-21*' } |
         Sort-Object Name -Descending
     foreach ($candidateHome in $knownHomes) {
         if (Test-Path -LiteralPath (Join-Path $candidateHome.FullName 'bin\java.exe')) {
@@ -247,20 +248,20 @@ function Get-Java25Home {
 
     $whereJava = & where.exe java 2>$null
     foreach ($entry in $whereJava) {
-        if ($entry -like '*jdk-25*java.exe') {
+        if ((Get-JavaVersionText -JavaExe $entry) -match 'version "21\.') {
             return Split-Path -Parent (Split-Path -Parent $entry)
         }
     }
 
-    throw 'Could not locate a JDK 25 installation'
+    throw 'Could not locate a JDK 21 installation; pass -JavaHome explicitly'
 }
 
-function Assert-Java25 {
+function Assert-BenchmarkJava {
     param([Parameter(Mandatory = $true)][string]$JavaExe)
 
     $versionText = Get-JavaVersionText -JavaExe $JavaExe
-    if ($versionText -notmatch 'version "25\.') {
-        throw "Expected Java 25, but '$JavaExe' reported:`n$versionText"
+    if ($versionText -notmatch 'version "21\.') {
+        throw "Expected Java 21, but '$JavaExe' reported:`n$versionText"
     }
 }
 
@@ -270,11 +271,18 @@ function Get-JavaVersionText {
     $previousPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        $versionText = & $JavaExe -version 2>&1 | Out-String
+        $versionLines = & $JavaExe -version 2>&1
     } finally {
         $ErrorActionPreference = $previousPreference
     }
-    return $versionText.Trim()
+    $cleanLines = foreach ($line in $versionLines) {
+        if ($line -is [System.Management.Automation.ErrorRecord]) {
+            $line.Exception.Message
+        } else {
+            [string]$line
+        }
+    }
+    return (($cleanLines -join [Environment]::NewLine).Trim())
 }
 
 function Get-FileSha256 {
@@ -527,6 +535,12 @@ function Ensure-WorktreeBuild {
         throw "Could not apply build infrastructure from $InfrastructureCommit"
     }
 
+    $plannerRelativePath = 'src\main\java\com\sci\torcherino\acceleration\CoveragePlanner.java'
+    $plannerSourcePath = Join-Path $RepoRootValue $plannerRelativePath
+    $plannerTargetPath = Join-Path $worktreePath $plannerRelativePath
+    Assert-InputPath -Path $plannerSourcePath -Label 'current coordinate-layout fix'
+    Copy-Item -LiteralPath $plannerSourcePath -Destination $plannerTargetPath -Force
+
     $catalogPath = Join-Path $worktreePath 'src\main\java\com\sci\torcherino\compat\CompatibilityCatalog.java'
     Ensure-Directory -Path (Split-Path -Parent $catalogPath)
     @(
@@ -612,7 +626,7 @@ function Ensure-CleanroomServer {
 
 function New-RconClient {
     param(
-        [Parameter(Mandatory = $true)][string]$Host,
+        [Parameter(Mandatory = $true)][string]$RconHostValue,
         [Parameter(Mandatory = $true)][int]$Port,
         [Parameter(Mandatory = $true)][string]$Password,
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds
@@ -621,7 +635,7 @@ function New-RconClient {
     $client = New-Object System.Net.Sockets.TcpClient
     $client.ReceiveTimeout = $TimeoutSeconds * 1000
     $client.SendTimeout = $TimeoutSeconds * 1000
-    $client.Connect($Host, $Port)
+    $client.Connect($RconHostValue, $Port)
 
     $stream = $client.GetStream()
     $stream.ReadTimeout = $TimeoutSeconds * 1000
@@ -636,14 +650,14 @@ function New-RconClient {
         Reader    = $reader
         NextId    = 1
         Password  = $Password
-        Host      = $Host
+        Host      = $RconHostValue
         Port      = $Port
     }
 
     $authId = Send-RconPacket -State $state -Type 3 -Payload $Password
     $response = Read-RconPacket -State $state
     if ($response.RequestId -ne $authId) {
-        throw "RCON authentication failed for $($Host):$Port"
+        throw "RCON authentication failed for $($RconHostValue):$Port"
     }
 
     return $state
@@ -661,13 +675,21 @@ function Send-RconPacket {
 
     $payloadBytes = [System.Text.Encoding]::UTF8.GetBytes($Payload)
     $packetLength = 4 + 4 + $payloadBytes.Length + 2
-    $State.Writer.Write([int]$packetLength)
-    $State.Writer.Write([int]$requestId)
-    $State.Writer.Write([int]$Type)
-    $State.Writer.Write($payloadBytes)
-    $State.Writer.Write([byte]0)
-    $State.Writer.Write([byte]0)
-    $State.Writer.Flush()
+    $packet = New-Object byte[] (4 + $packetLength)
+    $lengthBytes = [System.BitConverter]::GetBytes([int]$packetLength)
+    $requestBytes = [System.BitConverter]::GetBytes([int]$requestId)
+    $typeBytes = [System.BitConverter]::GetBytes([int]$Type)
+    if (-not [System.BitConverter]::IsLittleEndian) {
+        [Array]::Reverse($lengthBytes)
+        [Array]::Reverse($requestBytes)
+        [Array]::Reverse($typeBytes)
+    }
+    [Array]::Copy($lengthBytes, 0, $packet, 0, 4)
+    [Array]::Copy($requestBytes, 0, $packet, 4, 4)
+    [Array]::Copy($typeBytes, 0, $packet, 8, 4)
+    [Array]::Copy($payloadBytes, 0, $packet, 12, $payloadBytes.Length)
+    $State.Stream.Write($packet, 0, $packet.Length)
+    $State.Stream.Flush()
 
     return $requestId
 }
@@ -698,7 +720,6 @@ function Invoke-RconCommand {
 
     $requestId = Send-RconPacket -State $State -Type 2 -Payload $Command
     $responses = New-Object System.Collections.Generic.List[string]
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
         try {
             $packet = Read-RconPacket -State $State
@@ -713,7 +734,8 @@ function Invoke-RconCommand {
         } catch [System.Management.Automation.MethodInvocationException] {
             break
         }
-    } while ($State.Client.Connected -and ($State.Stream.DataAvailable -or (Get-Date) -lt $deadline))
+        Start-Sleep -Milliseconds 25
+    } while ($State.Client.Connected -and $State.Stream.DataAvailable)
 
     return ($responses -join [Environment]::NewLine)
 }
@@ -882,9 +904,9 @@ function Assert-InputPath {
 }
 
 $repoRoot = Get-RepoRoot
-$javaHomeValue = Get-Java25Home -PreferredHome $JavaHome
+$javaHomeValue = Get-BenchmarkJavaHome -PreferredHome $JavaHome
 $javaExe = Join-Path $javaHomeValue 'bin\java.exe'
-Assert-Java25 -JavaExe $javaExe
+Assert-BenchmarkJava -JavaExe $javaExe
 
 if (-not $CleanroomInstallerJar) {
     $CleanroomInstallerJar = Join-Path $repoRoot 'cleanroom\cleanroom-0.1.0-installer.jar'
@@ -1053,7 +1075,7 @@ $candidateRows = @(
 if ($worktreeInfo) {
     $candidateRows += [pscustomobject]@{
         Label  = 'c8bcaae-scheduler-baseline'
-        Source = "$WorktreeCommit logic + $WorktreeBuildClosureCommit build closure + empty compatibility catalog"
+        Source = "$WorktreeCommit logic + coordinate-layout fix + $WorktreeBuildClosureCommit build closure + empty compatibility catalog"
         Jar    = $worktreeInfo.JarPath
     }
 }
@@ -1084,6 +1106,7 @@ if (-not $SkipThermalEnvironmentProbe) {
     Remove-DirectorySafe -Root $BenchmarkServerRoot -Path (Join-Path $BenchmarkServerRoot 'world') -Label 'world'
     Remove-DirectorySafe -Root $BenchmarkServerRoot -Path (Join-Path $BenchmarkServerRoot 'logs') -Label 'logs'
     Remove-DirectorySafe -Root $BenchmarkServerRoot -Path (Join-Path $BenchmarkServerRoot 'crash-reports') -Label 'crash reports'
+    Remove-DirectorySafe -Root $BenchmarkServerRoot -Path (Join-Path $BenchmarkServerRoot 'export') -Label 'export'
     Copy-ModArtifacts -ServerRoot $BenchmarkServerRoot -JarPaths (@($currentJarPath) + $AdditionalModJars + $ThermalProbeModJars) -SupportPaths $allSupportPaths
 
     $thermalStartedAt = Get-Date
@@ -1093,7 +1116,7 @@ if (-not $SkipThermalEnvironmentProbe) {
     $thermalDetail = 'server reached ready state'
     try {
         Wait-ServerReady -ServerProcessInfo $thermalServer -ServerRootValue $BenchmarkServerRoot -TimeoutSeconds ([Math]::Min($StartupTimeoutSeconds, 240))
-        $thermalRcon = New-RconClient -Host $RconHost -Port $RconPort -Password $RconPassword -TimeoutSeconds $RconTimeoutSeconds
+        $thermalRcon = New-RconClient -RconHostValue $RconHost -Port $RconPort -Password $RconPassword -TimeoutSeconds $RconTimeoutSeconds
         [void](Invoke-RconCommand -State $thermalRcon -Command 'stop' -TimeoutSeconds $RconTimeoutSeconds)
         [void]$thermalServer.Process.WaitForExit($StartupTimeoutSeconds * 1000)
     } catch {
@@ -1103,7 +1126,7 @@ if (-not $SkipThermalEnvironmentProbe) {
         if (Test-Path -LiteralPath $thermalLog) {
             $thermalLogText = Get-Content -LiteralPath $thermalLog -Raw
             if ($thermalLogText -match "NoSuchMethodError: 'java.lang.Object jdk.internal.misc.Unsafe.getObject") {
-                $thermalDetail = 'CodeChickenLib 3.2.4.1 is incompatible with CatRoom on JDK 25: jdk.internal.misc.Unsafe.getObject is unavailable'
+                $thermalDetail = 'CodeChickenLib 3.2.4.1 is incompatible with CatRoom on the selected Java runtime: jdk.internal.misc.Unsafe.getObject is unavailable'
             }
         }
         if (-not $thermalServer.Process.HasExited) {
@@ -1158,6 +1181,7 @@ if (-not $SkipEnderIoEnvironmentProbe) {
     Remove-DirectorySafe -Root $BenchmarkServerRoot -Path (Join-Path $BenchmarkServerRoot 'world') -Label 'world'
     Remove-DirectorySafe -Root $BenchmarkServerRoot -Path (Join-Path $BenchmarkServerRoot 'logs') -Label 'logs'
     Remove-DirectorySafe -Root $BenchmarkServerRoot -Path (Join-Path $BenchmarkServerRoot 'crash-reports') -Label 'crash reports'
+    Remove-DirectorySafe -Root $BenchmarkServerRoot -Path (Join-Path $BenchmarkServerRoot 'export') -Label 'export'
     Copy-ModArtifacts -ServerRoot $BenchmarkServerRoot -JarPaths (@($currentJarPath) + $AdditionalModJars + $EnderIoProbeModJars) -SupportPaths $allSupportPaths
 
     $probeStartedAt = Get-Date
@@ -1167,7 +1191,7 @@ if (-not $SkipEnderIoEnvironmentProbe) {
     $probeDetail = 'server reached ready state'
     try {
         Wait-ServerReady -ServerProcessInfo $probeServer -ServerRootValue $BenchmarkServerRoot -TimeoutSeconds ([Math]::Min($StartupTimeoutSeconds, 240))
-        $probeRcon = New-RconClient -Host $RconHost -Port $RconPort -Password $RconPassword -TimeoutSeconds $RconTimeoutSeconds
+        $probeRcon = New-RconClient -RconHostValue $RconHost -Port $RconPort -Password $RconPassword -TimeoutSeconds $RconTimeoutSeconds
         [void](Invoke-RconCommand -State $probeRcon -Command 'stop' -TimeoutSeconds $RconTimeoutSeconds)
         [void]$probeServer.Process.WaitForExit($StartupTimeoutSeconds * 1000)
     } catch {
@@ -1308,7 +1332,7 @@ foreach ($candidate in $candidates) {
         $rcon = $null
         try {
             Wait-ServerReady -ServerProcessInfo $server -ServerRootValue $BenchmarkServerRoot -TimeoutSeconds $StartupTimeoutSeconds
-            $rcon = New-RconClient -Host $RconHost -Port $RconPort -Password $RconPassword -TimeoutSeconds $RconTimeoutSeconds
+            $rcon = New-RconClient -RconHostValue $RconHost -Port $RconPort -Password $RconPassword -TimeoutSeconds $RconTimeoutSeconds
 
             Write-Status "RCON confirmed for $($candidate.Label) layer $($layer.Label)"
             $fmlResponse = Invoke-RconCommand -State $rcon -Command '/fml confirm' -TimeoutSeconds $RconTimeoutSeconds
@@ -1408,7 +1432,7 @@ foreach ($candidate in $candidates) {
             if (Test-Path -LiteralPath $latestLogPath) {
                 $latestLogText = Get-Content -LiteralPath $latestLogPath -Raw
                 if ($latestLogText -match "NoSuchMethodError: 'void jdk.internal.misc.Unsafe.putObject") {
-                    $fatalEnvironmentReason = 'CatRoom core Forge capability initialization is incompatible with JDK 25: jdk.internal.misc.Unsafe.putObject is unavailable'
+                    $fatalEnvironmentReason = 'CatRoom core Forge capability initialization is incompatible with the selected Java runtime: jdk.internal.misc.Unsafe.putObject is unavailable'
                     $candidateError = 'environment-blocked: ' + $fatalEnvironmentReason
                 }
             }

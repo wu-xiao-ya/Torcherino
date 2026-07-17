@@ -1,5 +1,6 @@
 package com.sci.torcherino.acceleration;
 
+import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,6 +21,29 @@ class CoveragePlannerTest {
             assertEquals(coordinate[0], CoveragePlanner.unpackX(packed));
             assertEquals(coordinate[1], CoveragePlanner.unpackY(packed));
             assertEquals(coordinate[2], CoveragePlanner.unpackZ(packed));
+        }
+    }
+
+    @Test
+    void matchesMinecraftBlockPosLongLayout() {
+        int[][] coordinates = new int[][]{
+            {0, 0, 0},
+            {32, 81, 39},
+            {-12345, 255, 67890}
+        };
+
+        for (int[] coordinate : coordinates) {
+            BlockPos pos = new BlockPos(coordinate[0], coordinate[1], coordinate[2]);
+            assertEquals(pos.toLong(), CoveragePlanner.pack(
+                coordinate[0],
+                coordinate[1],
+                coordinate[2]
+            ));
+            assertEquals(pos, BlockPos.fromLong(CoveragePlanner.pack(
+                coordinate[0],
+                coordinate[1],
+                coordinate[2]
+            )));
         }
     }
 

@@ -145,12 +145,19 @@ public final class WorldAccelerationManager {
         BlockPos pos = BlockPos.fromLong(packedPos);
         try {
             if (!world.isBlockLoaded(pos, false)) {
+                recordSkipped("unloaded", "unknown", multiplier, targetStart);
                 return;
             }
 
             IBlockState state = world.getBlockState(pos);
             Block block = state.getBlock();
             if (block instanceof BlockFluidBase || TorcherinoRegistry.isBlockBlacklisted(block)) {
+                recordSkipped(
+                    "block-blacklisted",
+                    block.getClass().getName(),
+                    multiplier,
+                    targetStart
+                );
                 return;
             }
 
@@ -160,13 +167,29 @@ public final class WorldAccelerationManager {
 
             IBlockState tileState = world.getBlockState(pos);
             if (!tileState.getBlock().hasTileEntity(tileState)) {
+                recordSkipped(
+                    "no-tile",
+                    tileState.getBlock().getClass().getName(),
+                    multiplier,
+                    targetStart
+                );
                 return;
             }
             TileEntity tile = world.getTileEntity(pos);
-            if (tile == null || tile.isInvalid() || TorcherinoRegistry.isTileBlacklisted(tile.getClass())) {
+            if (tile == null) {
+                recordSkipped("missing-tile", tileState.getBlock().getClass().getName(), multiplier, targetStart);
+                return;
+            }
+            if (tile.isInvalid()) {
+                recordSkipped("invalid-tile", tile.getClass().getName(), multiplier, targetStart);
+                return;
+            }
+            if (TorcherinoRegistry.isTileBlacklisted(tile.getClass())) {
+                recordSkipped("tile-blacklisted", tile.getClass().getName(), multiplier, targetStart);
                 return;
             }
             if (!(tile instanceof ITickable)) {
+                recordSkipped("not-tickable", tile.getClass().getName(), multiplier, targetStart);
                 return;
             }
 
@@ -258,6 +281,20 @@ public final class WorldAccelerationManager {
             world.provider.getDimension(),
             pos,
             elapsed / 1_000_000.0D
+        );
+    }
+
+    private void recordSkipped(
+        String reason,
+        String targetClass,
+        int skippedTicks,
+        long startedAt
+    ) {
+        AccelerationProfiler.getInstance().recordSkipped(
+            targetClass,
+            reason,
+            skippedTicks,
+            System.nanoTime() - startedAt
         );
     }
 

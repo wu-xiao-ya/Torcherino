@@ -7,12 +7,16 @@ import com.sci.torcherino.api.AdapterProbe;
 import com.sci.torcherino.api.AdvanceResult;
 import com.sci.torcherino.api.IExactAccelerationAdapter;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.util.ITickable;
 import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.fml.common.ModContainer;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 final class ThermalAccelerableAdapter
     implements IExactAccelerationAdapter<TileEntity> {
@@ -20,6 +24,8 @@ final class ThermalAccelerableAdapter
 
     private Class<?> interfaceClass;
     private MethodHandle updateAccelerable;
+    private final Map<Class<?>, MethodHandle> canFinishHandles =
+        new ConcurrentHashMap<Class<?>, MethodHandle>();
 
     @Override
     public String getId() {
@@ -65,7 +71,9 @@ final class ThermalAccelerableAdapter
 
     @Override
     public boolean supportsInstance(TileEntity tile) {
-        return interfaceClass != null && interfaceClass.isInstance(tile);
+        return interfaceClass != null
+            && interfaceClass.isInstance(tile)
+            && tile instanceof ITickable;
     }
 
     @Override
@@ -73,11 +81,15 @@ final class ThermalAccelerableAdapter
         throws Exception {
         int consumed = 0;
         try {
+            MethodHandle canFinish = canFinishHandle(tile.getClass());
             for (; consumed < ticks; consumed++) {
                 if (tile.isInvalid()) {
                     return AdvanceResult.invalidated(consumed);
                 }
-                updateAccelerable.invoke(tile);
+                int energyUsed = (int) updateAccelerable.invoke(tile);
+                if ((boolean) canFinish.invoke(tile) || energyUsed <= 0) {
+                    ((ITickable) tile).update();
+                }
             }
             return AdvanceResult.consumed(consumed, false);
         } catch (RuntimeException e) {
@@ -91,5 +103,26 @@ final class ThermalAccelerableAdapter
                 throwable
             );
         }
+    }
+
+    private MethodHandle canFinishHandle(Class<?> tileClass)
+        throws IllegalAccessException, NoSuchMethodException {
+        MethodHandle cached = canFinishHandles.get(tileClass);
+        if (cached != null) {
+            return cached;
+        }
+        Class<?> current = tileClass;
+        while (current != null) {
+            try {
+                Method method = current.getDeclaredMethod("canFinish");
+                method.setAccessible(true);
+                MethodHandle handle = MethodHandles.lookup().unreflect(method);
+                MethodHandle previous = canFinishHandles.putIfAbsent(tileClass, handle);
+                return previous == null ? handle : previous;
+            } catch (NoSuchMethodException ignored) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new NoSuchMethodException(tileClass.getName() + ".canFinish()");
     }
 }

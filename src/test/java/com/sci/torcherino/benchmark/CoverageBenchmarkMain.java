@@ -170,8 +170,8 @@ public final class CoverageBenchmarkMain {
 
     private static long pack(int x, int y, int z) {
         return ((long) x & 0x3FFFFFFL) << 38
-            | ((long) z & 0x3FFFFFFL) << 12
-            | ((long) y & 0xFFFL);
+            | ((long) y & 0xFFFL) << 26
+            | ((long) z & 0x3FFFFFFL);
     }
 
     private static final class LegacyTraversal implements Runnable {
@@ -190,7 +190,7 @@ public final class CoverageBenchmarkMain {
                 }
                 int x = (int) (torch.getPos() >> 38);
                 int y = unpackY(torch.getPos());
-                int z = (int) (torch.getPos() << 26 >> 38);
+                int z = (int) (torch.getPos() << 38 >> 38);
                 for (int dx = -torch.getRange(); dx <= torch.getRange(); dx++) {
                     for (int dy = -1; dy <= 1; dy++) {
                         for (int dz = -torch.getRange(); dz <= torch.getRange(); dz++) {
@@ -238,13 +238,13 @@ public final class CoverageBenchmarkMain {
             return new LegacyPosition(
                 (int) (packed >> 38),
                 unpackY(packed),
-                (int) (packed << 26 >> 38)
+                (int) (packed << 38 >> 38)
             );
         }
     }
 
     private static int unpackY(long packed) {
-        int y = (int) (packed & 0xFFFL);
+        int y = (int) ((packed >> 26) & 0xFFFL);
         return y >= 2048 ? y - 4096 : y;
     }
 

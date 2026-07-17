@@ -54,8 +54,8 @@ public final class CoveragePlanner {
 
     static long pack(int x, int y, int z) {
         return ((long) x & X_MASK) << 38
-            | ((long) z & Z_MASK) << 12
-            | ((long) y & Y_MASK);
+            | ((long) y & Y_MASK) << 26
+            | ((long) z & Z_MASK);
     }
 
     static int unpackX(long packed) {
@@ -63,12 +63,12 @@ public final class CoveragePlanner {
     }
 
     static int unpackY(long packed) {
-        int y = (int) (packed & Y_MASK);
+        int y = (int) ((packed >> 26) & Y_MASK);
         return y >= 2048 ? y - 4096 : y;
     }
 
     static int unpackZ(long packed) {
-        return (int) (packed << 26 >> 38);
+        return (int) (packed << 38 >> 38);
     }
 
     private static int saturatedAdd(int current, int delta) {

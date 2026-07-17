@@ -8,6 +8,7 @@ import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.tileentity.TileEntityFurnace;
 import net.minecraft.util.ITickable;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.math.BlockPos;
@@ -20,6 +21,8 @@ import net.minecraftforge.items.CapabilityItemHandler;
 import net.minecraftforge.items.IItemHandler;
 import net.minecraftforge.items.IItemHandlerModifiable;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -48,6 +51,7 @@ public final class WorldArena {
         new LinkedHashMap<Long, BlockSnapshot>();
     private final List<BlockPos> torcherinoPositions = new ArrayList<BlockPos>();
     private final List<MachineHandle> machines = new ArrayList<MachineHandle>();
+    private boolean centerSingleMachine;
     private boolean originalCaptured;
     private boolean sceneBuilt;
     private MachineObservation baselineObservation;
@@ -88,6 +92,7 @@ public final class WorldArena {
         clearArena();
         machines.clear();
         torcherinoPositions.clear();
+        centerSingleMachine = machineCount == 1;
         baselineObservation = null;
         machineBindingDescription = "";
 
@@ -99,8 +104,10 @@ public final class WorldArena {
         }
         buildTorcherinos(torchVariant, torchCount, expectedMultiplier);
         initializeMachineInputs(kind);
+        primeMachines(kind);
+        captureMachineBaseline();
         activateTorcherinos();
-        captureBaseline();
+        restoreMachineBaseline();
         baselineObservation = captureMachineObservation();
         sceneBuilt = true;
     }
@@ -109,8 +116,7 @@ public final class WorldArena {
         if (!sceneBuilt || baselineObservation == null) {
             throw new BenchmarkEnvironmentException("Scene baseline has not been built");
         }
-        restoreSnapshot(baseline);
-        activateTorcherinos();
+        restoreMachineBaseline();
     }
 
     public MachineObservation captureMachineObservation()
@@ -373,6 +379,94 @@ public final class WorldArena {
         return new ItemStack(Blocks.IRON_ORE, 64);
     }
 
+    private void primeMachines(BenchmarkSuite.ScenarioKind kind)
+        throws BenchmarkEnvironmentException {
+        if (kind == BenchmarkSuite.ScenarioKind.THERMAL_REDSTONE_FURNACE) {
+            for (MachineHandle machine : machines) {
+                primeThermalMachine(machine);
+            }
+            for (MachineHandle machine : machines) {
+                fillEnergy(machine, requireTile(machine.pos, machine.id));
+            }
+            return;
+        }
+        for (int tick = 0; tick < 5; tick++) {
+            for (MachineHandle machine : machines) {
+                TileEntity tile = requireTile(machine.pos, machine.id);
+                if (!(tile instanceof ITickable)) {
+                    throw new BenchmarkEnvironmentException(
+                        "Benchmark machine is not tickable: " + machine.id
+                    );
+                }
+                ((ITickable) tile).update();
+            }
+        }
+        if (kind != BenchmarkSuite.ScenarioKind.VANILLA_FURNACE) {
+            for (MachineHandle machine : machines) {
+                fillEnergy(machine, requireTile(machine.pos, machine.id));
+            }
+        }
+    }
+
+    private void primeThermalMachine(MachineHandle machine)
+        throws BenchmarkEnvironmentException {
+        TileEntity tile = requireTile(machine.pos, machine.id);
+        try {
+            Method getRecipe = findMethod(tile.getClass(), "getRecipe");
+            Method processStart = findMethod(tile.getClass(), "processStart");
+            Field isActive = findField(tile.getClass(), "isActive");
+            getRecipe.invoke(tile);
+            processStart.invoke(tile);
+            isActive.setBoolean(tile, true);
+
+            NBTTagCompound tag = tile.writeToNBT(new NBTTagCompound());
+            if (tag.getInteger("ProcMax") <= 0 || tag.getInteger("ProcRem") <= 0) {
+                throw new BenchmarkEnvironmentException(
+                    "Thermal machine did not enter a deterministic processing state: "
+                        + machine.id
+                );
+            }
+        } catch (BenchmarkEnvironmentException failure) {
+            throw failure;
+        } catch (Throwable failure) {
+            throw new BenchmarkEnvironmentException(
+                "Unable to prime Thermal processing state for " + machine.id
+                    + ": " + failure.getClass().getSimpleName()
+                    + ": " + String.valueOf(failure.getMessage())
+            );
+        }
+    }
+
+    private static Method findMethod(Class<?> type, String name)
+        throws NoSuchMethodException {
+        Class<?> current = type;
+        while (current != null) {
+            try {
+                Method method = current.getDeclaredMethod(name);
+                method.setAccessible(true);
+                return method;
+            } catch (NoSuchMethodException ignored) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new NoSuchMethodException(type.getName() + "." + name + "()");
+    }
+
+    private static Field findField(Class<?> type, String name)
+        throws NoSuchFieldException {
+        Class<?> current = type;
+        while (current != null) {
+            try {
+                Field field = current.getDeclaredField(name);
+                field.setAccessible(true);
+                return field;
+            } catch (NoSuchFieldException ignored) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException(type.getName() + "." + name);
+    }
+
     private void fillEnergy(MachineHandle machine, TileEntity tile)
         throws BenchmarkEnvironmentException {
         IEnergyStorage energy = getEnergyStorage(tile);
@@ -429,6 +523,10 @@ public final class WorldArena {
             );
         }
         for (BlockPos pos : torcherinoPlacements(torchCount)) {
+            BlockPos support = pos.down();
+            if (world.isAirBlock(support)) {
+                setBlock(support, Blocks.STONE.getDefaultState(), null);
+            }
             setBlock(pos, torch.getDefaultState(), null);
             TileEntity tile = world.getTileEntity(pos);
             if (tile == null) {
@@ -478,16 +576,20 @@ public final class WorldArena {
         long energyCapacity = energy == null
             ? readLong(tag, "MaxEnergy", "capacity", "EnergyCapacity")
             : energy.getMaxEnergyStored();
-        long progress = readLong(
-            tag,
-            "CookTime",
-            "cookTime",
-            "Progress",
-            "progress",
-            "ProcessTime",
-            "processTime",
-            "smeltingProgress"
-        );
+        long processMax = readLong(tag, "ProcMax");
+        long processRem = readLong(tag, "ProcRem");
+        long progress = processMax > 0L
+            ? processMax - processRem
+            : readLong(
+                tag,
+                "CookTime",
+                "cookTime",
+                "Progress",
+                "progress",
+                "ProcessTime",
+                "processTime",
+                "smeltingProgress"
+            );
         long burnTime = readLong(
             tag,
             "BurnTime",
@@ -495,6 +597,11 @@ public final class WorldArena {
             "Fuel",
             "fuel"
         );
+        if (tile instanceof TileEntityFurnace) {
+            TileEntityFurnace furnace = (TileEntityFurnace) tile;
+            burnTime = furnace.getField(0);
+            progress = furnace.getField(2);
+        }
         if (burnTime == 0L && fuelItems > 0L) {
             burnTime = fuelItems;
         }
@@ -610,8 +717,12 @@ public final class WorldArena {
 
     private List<BlockPos> torcherinoPlacements(int torchCount) {
         List<BlockPos> placements = new ArrayList<BlockPos>();
-        for (int x = 0; x < WIDTH && placements.size() < torchCount; x++) {
-            for (int z = 0; z < DEPTH && placements.size() < torchCount; z++) {
+        if (torchCount == 1) {
+            placements.add(origin.add(3, TORCH_Y_OFFSET, 3));
+            return placements;
+        }
+        for (int x = 0; x <= WIDTH && placements.size() < torchCount; x++) {
+            for (int z = 0; z <= DEPTH && placements.size() < torchCount; z++) {
                 placements.add(origin.add(x, TORCH_Y_OFFSET, z));
             }
         }
@@ -619,6 +730,9 @@ public final class WorldArena {
     }
 
     private BlockPos machinePosition(int index) {
+        if (centerSingleMachine) {
+            return origin.add(WIDTH / 2, MACHINE_Y_OFFSET, DEPTH / 2);
+        }
         return origin.add(index / WIDTH, MACHINE_Y_OFFSET, index % WIDTH);
     }
 
@@ -646,9 +760,34 @@ public final class WorldArena {
         originalCaptured = true;
     }
 
-    private void captureBaseline() {
+    private void captureMachineBaseline() {
         baseline.clear();
-        captureSnapshot(baseline);
+        for (MachineHandle machine : machines) {
+            TileEntity tile = world.getTileEntity(machine.pos);
+            NBTTagCompound tag = tile == null
+                ? null
+                : tile.writeToNBT(new NBTTagCompound());
+            baseline.put(
+                machine.pos.toLong(),
+                new BlockSnapshot(world.getBlockState(machine.pos), tag)
+            );
+        }
+    }
+
+    private void restoreMachineBaseline() throws BenchmarkEnvironmentException {
+        for (MachineHandle machine : machines) {
+            BlockSnapshot snapshot = baseline.get(machine.pos.toLong());
+            if (snapshot == null) {
+                throw new BenchmarkEnvironmentException(
+                    "Missing machine baseline for " + machine.id
+                );
+            }
+            setBlock(machine.pos, snapshot.state, snapshot.nbt);
+            TileEntity tile = requireTile(machine.pos, machine.id);
+            if (!"vanilla".equals(machine.kind)) {
+                fillEnergy(machine, tile);
+            }
+        }
     }
 
     private void captureSnapshot(Map<Long, BlockSnapshot> target) {

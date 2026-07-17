@@ -87,6 +87,32 @@ public final class AccelerationProfiler {
         value.nanos.add(nanos);
     }
 
+    public void recordSkipped(
+        String targetClass,
+        String reason,
+        int skippedTicks,
+        long nanos
+    ) {
+        if (!enabled) {
+            return;
+        }
+        String adapterId = "skip-" + reason;
+        String key = adapterId + "|" + targetClass;
+        MutableStats value = stats.get(key);
+        if (value == null) {
+            MutableStats created = new MutableStats(
+                adapterId,
+                targetClass,
+                AdapterClassification.BLACKLIST
+            );
+            MutableStats raced = stats.putIfAbsent(key, created);
+            value = raced == null ? created : raced;
+        }
+        value.calls.increment();
+        value.skippedTicks.add(skippedTicks);
+        value.nanos.add(nanos);
+    }
+
     public List<Map<String, Object>> snapshot(int limit) {
         List<MutableStats> values = new ArrayList<MutableStats>(stats.values());
         Collections.sort(values, new Comparator<MutableStats>() {

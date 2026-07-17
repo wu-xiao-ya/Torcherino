@@ -248,6 +248,7 @@ public final class BenchmarkController {
         private boolean skipCurrentTick = true;
         private boolean pendingReset;
         private boolean worldTickStarted;
+        private boolean benchmarkWorldTickEnded;
         private boolean finished;
         private boolean currentScenarioRecorded;
         private int scenarioIndex;
@@ -316,7 +317,6 @@ public final class BenchmarkController {
             if (finished) {
                 return;
             }
-            tickWindow.beginServer();
             if (!scenePrepared) {
                 return;
             }
@@ -334,6 +334,7 @@ public final class BenchmarkController {
             if (skipCurrentTick) {
                 return;
             }
+            tickWindow.beginServer();
         }
 
         private void onWorldTickStart(WorldServer world) {
@@ -351,6 +352,7 @@ public final class BenchmarkController {
                 beforeObservation = arena.captureMachineObservation();
                 tickWindow.beginWorld();
                 worldTickStarted = true;
+                benchmarkWorldTickEnded = false;
             } catch (BenchmarkEnvironmentException failure) {
                 blockCurrentScenario(failure.getMessage());
             }
@@ -360,15 +362,7 @@ public final class BenchmarkController {
             if (finished || world != benchmarkWorld || !worldTickStarted) {
                 return;
             }
-            try {
-                afterObservation = arena.captureMachineObservation();
-                tickWindow.endWorld();
-                lastWorldTickNanos = tickWindow.getWorldTickNanos();
-                worldTickStarted = false;
-            } catch (BenchmarkEnvironmentException failure) {
-                worldTickStarted = false;
-                blockCurrentScenario(failure.getMessage());
-            }
+            benchmarkWorldTickEnded = true;
         }
 
         private void onServerTickEnd() {
@@ -385,13 +379,38 @@ public final class BenchmarkController {
                 tickWindow.reset();
                 return;
             }
-            if (worldTickStarted || beforeObservation == null || afterObservation == null) {
+            if (!worldTickStarted
+                || !benchmarkWorldTickEnded
+                || beforeObservation == null) {
                 blockCurrentScenario("Benchmark world tick did not complete");
                 tickWindow.reset();
                 return;
             }
-            tickWindow.endServer();
+            try {
+                afterObservation = arena.captureMachineObservation();
+                tickWindow.endWorld();
+                tickWindow.endServer();
+                lastWorldTickNanos = tickWindow.getWorldTickNanos();
+                worldTickStarted = false;
+                benchmarkWorldTickEnded = false;
+            } catch (BenchmarkEnvironmentException failure) {
+                worldTickStarted = false;
+                benchmarkWorldTickEnded = false;
+                blockCurrentScenario(failure.getMessage());
+                tickWindow.reset();
+                return;
+            }
             lastServerTickNanos = tickWindow.getServerTickNanos();
+            if (warmupRemaining == suite.getWarmupTicks()) {
+                logger.info(
+                    "Torcherino benchmark first tick scenario={} plans={} profiler={}",
+                    currentScenario.getId(),
+                    ProfilerBridge.describePlans(),
+                    profiler == null
+                        ? Collections.emptyList()
+                        : profiler.snapshot()
+                );
+            }
             if (warmupRemaining > 0) {
                 warmupRemaining--;
             } else if (measuredRemaining > 0) {
@@ -497,6 +516,7 @@ public final class BenchmarkController {
             benchmarkWorld = null;
             scenePrepared = false;
             worldTickStarted = false;
+            benchmarkWorldTickEnded = false;
             beforeObservation = null;
             afterObservation = null;
             pendingReset = false;
@@ -521,6 +541,8 @@ public final class BenchmarkController {
             lastServerTickNanos = -1L;
             lastWorldTickNanos = -1L;
             samples.clear();
+            worldTickStarted = false;
+            benchmarkWorldTickEnded = false;
             tickWindow.reset();
             return true;
         }

@@ -120,4 +120,27 @@ final class ProfilerBridge {
     String getDetail() {
         return detail;
     }
+
+    static List<String> describePlans() {
+        try {
+            Class<?> type = Class.forName(
+                "com.sci.torcherino.acceleration.AccelerationService",
+                false,
+                ProfilerBridge.class.getClassLoader()
+            );
+            Object value = type.getMethod("describePlans").invoke(null);
+            if (!(value instanceof List)) {
+                return Collections.singletonList("unexpected-plan-result=" + value);
+            }
+            List<String> result = new ArrayList<String>();
+            for (Object row : (List<?>) value) {
+                result.add(String.valueOf(row));
+            }
+            return result;
+        } catch (Throwable failure) {
+            return Collections.singletonList(
+                "plan-diagnostics-unavailable=" + failure.getClass().getSimpleName()
+            );
+        }
+    }
 }
