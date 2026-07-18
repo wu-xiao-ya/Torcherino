@@ -17,5 +17,9 @@ public interface IExactAccelerationAdapter<T extends TileEntity> {
         return false;
     }
 
+    default int getMinimumBatchTicks() {
+        return 1;
+    }
+
     AdvanceResult advanceExact(T tile, int ticks, AccelerationContext context) throws Exception;
 }

@@ -1,5 +1,7 @@
 package com.sci.torcherino.benchmarkharness;
 
+import com.sci.torcherino.acceleration.AdapterBenchmarkBridge;
+import com.sci.torcherino.api.AccelerationContext;
 import net.minecraft.block.Block;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.init.Blocks;
@@ -302,8 +304,10 @@ final class AdapterDifferentialVerifier {
                     "route=" + dispatch.adapterId
                 );
             }
-            if (dispatch.consumedTicks != ticks
-                || dispatch.fallbackTicks != 0
+            if (dispatch.fallbackTicks > 0) {
+                kind.runLegacy(accelerated, dispatch.fallbackTicks);
+            }
+            if (dispatch.consumedTicks + dispatch.fallbackTicks != ticks
                 || dispatch.invalidated) {
                 return VerificationResult.fail(
                     kind.id,
@@ -355,7 +359,7 @@ final class AdapterDifferentialVerifier {
             boolean fallback = dispatch.consumedTicks == 0
                 && dispatch.fallbackTicks == 36
                 && !dispatch.invalidated
-                && !"ic2:macerator-no-upgrade-batch".equals(
+                && "ic2:macerator-no-upgrade-batch".equals(
                     dispatch.adapterId
                 );
             return fallback
@@ -730,7 +734,7 @@ final class AdapterDifferentialVerifier {
         AA_CANOLA(
             "aa-canola-press",
             "actuallyadditions:processing-batch",
-            false
+            true
         ) {
             @Override
             TileEntity create(WorldServer world, BlockPos pos) throws Exception {
@@ -754,7 +758,7 @@ final class AdapterDifferentialVerifier {
         AA_BARREL(
             "aa-fermenting-barrel",
             "actuallyadditions:processing-batch",
-            false
+            true
         ) {
             @Override
             TileEntity create(WorldServer world, BlockPos pos) throws Exception {
@@ -778,7 +782,7 @@ final class AdapterDifferentialVerifier {
         IC2_MACERATOR(
             "ic2-macerator",
             "ic2:macerator-no-upgrade-batch",
-            true
+            false
         ) {
             @Override
             TileEntity create(WorldServer world, BlockPos pos) throws Exception {
@@ -830,11 +834,6 @@ final class AdapterDifferentialVerifier {
     private static final class DispatchBridge {
         private static volatile DispatchBridge instance;
 
-        private final Object registry;
-        private final Class<?> contextClass;
-        private final Method dispatch;
-        private final Method prepare;
-        private final Method dispatchPrepared;
         private Method adapterId;
         private Method result;
         private Method consumed;
@@ -843,40 +842,6 @@ final class AdapterDifferentialVerifier {
         private Method syncRequired;
 
         private DispatchBridge() throws Exception {
-            ClassLoader loader =
-                AdapterDifferentialVerifier.class.getClassLoader();
-            Class<?> registryClass = loader.loadClass(
-                "com.sci.torcherino.acceleration.AdapterRegistry"
-            );
-            contextClass = loader.loadClass(
-                "com.sci.torcherino.api.AccelerationContext"
-            );
-            Class<?> routeClass = loader.loadClass(
-                "com.sci.torcherino.acceleration."
-                    + "AdapterRegistry$PreparedRoute"
-            );
-            registry = registryClass.getMethod("getInstance").invoke(null);
-            dispatch = registryClass.getDeclaredMethod(
-                "dispatch",
-                TileEntity.class,
-                int.class,
-                contextClass
-            );
-            prepare = registryClass.getDeclaredMethod(
-                "prepare",
-                TileEntity.class,
-                routeClass
-            );
-            dispatchPrepared = registryClass.getDeclaredMethod(
-                "dispatchPrepared",
-                TileEntity.class,
-                int.class,
-                contextClass,
-                routeClass
-            );
-            dispatch.setAccessible(true);
-            prepare.setAccessible(true);
-            dispatchPrepared.setAccessible(true);
         }
 
         private static DispatchBridge get() throws Exception {
@@ -894,11 +859,11 @@ final class AdapterDifferentialVerifier {
 
         private DispatchResult dispatch(TileEntity tile, int ticks)
             throws Exception {
-            Object raw = dispatch.invoke(
-                registry,
+            Object raw = AdapterBenchmarkBridge.dispatch(
                 tile,
                 ticks,
-                context(tile)
+                context(tile),
+                AdapterBenchmarkBridge.prepare(tile, null)
             );
             return parse(raw);
         }
@@ -915,15 +880,15 @@ final class AdapterDifferentialVerifier {
             );
         }
 
-        private Object context(TileEntity tile) throws Exception {
-            return contextClass
-                .getConstructor(WorldServer.class, BlockPos.class)
-                .newInstance(tile.getWorld(), tile.getPos());
+        private AccelerationContext context(TileEntity tile) {
+            return new AccelerationContext(
+                (WorldServer) tile.getWorld(),
+                tile.getPos()
+            );
         }
 
-        private Object prepareRoute(TileEntity tile, Object previous)
-            throws Exception {
-            return prepare.invoke(registry, tile, previous);
+        private Object prepareRoute(TileEntity tile, Object previous) {
+            return AdapterBenchmarkBridge.prepare(tile, previous);
         }
 
         private Object dispatchPrepared(
@@ -931,12 +896,11 @@ final class AdapterDifferentialVerifier {
             int ticks,
             Object context,
             Object route
-        ) throws Exception {
-            return dispatchPrepared.invoke(
-                registry,
+        ) {
+            return AdapterBenchmarkBridge.dispatch(
                 tile,
                 ticks,
-                context,
+                (AccelerationContext) context,
                 route
             );
         }
@@ -998,6 +962,10 @@ final class AdapterDifferentialVerifier {
             if (refreshRouteEachDispatch) {
                 route = bridge.prepareRoute(tile, route);
             }
+            if (AdapterBenchmarkBridge.usesLegacyBelow(route, ticks)) {
+                runTickableLegacy(tile, ticks);
+                return System.nanoTime() - start;
+            }
             Object raw = bridge.dispatchPrepared(
                 tile,
                 ticks,
@@ -1006,8 +974,12 @@ final class AdapterDifferentialVerifier {
             );
             long elapsed = System.nanoTime() - start;
             DispatchResult parsed = bridge.parse(raw);
-            if (parsed.consumedTicks != ticks
-                || parsed.fallbackTicks != 0
+            if (parsed.fallbackTicks > 0) {
+                long fallbackStart = System.nanoTime();
+                runTickableLegacy(tile, parsed.fallbackTicks);
+                elapsed += System.nanoTime() - fallbackStart;
+            }
+            if (parsed.consumedTicks + parsed.fallbackTicks != ticks
                 || parsed.invalidated) {
                 throw new IllegalStateException(
                     "route=" + parsed.adapterId

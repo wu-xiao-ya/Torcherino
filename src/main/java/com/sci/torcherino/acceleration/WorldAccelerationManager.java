@@ -3,6 +3,7 @@ package com.sci.torcherino.acceleration;
 import com.sci.torcherino.Torcherino;
 import com.sci.torcherino.TorcherinoRegistry;
 import com.sci.torcherino.api.AccelerationContext;
+import com.sci.torcherino.api.AdapterClassification;
 import com.sci.torcherino.api.AdvanceResult;
 import com.sci.torcherino.blocks.tiles.TileTorcherino;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
@@ -469,6 +470,34 @@ public final class WorldAccelerationManager {
             AdapterRegistry registry = AdapterRegistry.getInstance();
             AdapterRegistry.PreparedRoute route =
                 cachedContext.prepareRoute(registry, tile);
+            if (route.usesLegacyBelow(multiplier)) {
+                final TileEntity expectedTile = tile;
+                int fallbackTicks = runFallbackTicks(
+                    tile,
+                    (ITickable) tile,
+                    multiplier,
+                    new BooleanSupplier() {
+                        @Override
+                        public boolean getAsBoolean() {
+                            return world.isBlockLoaded(pos, false)
+                                && world.getTileEntity(pos) == expectedTile;
+                        }
+                    }
+                );
+                if (profiling) {
+                    profiler.record(
+                        tile.getClass().getName(),
+                        route.getAdapterId(),
+                        AdapterClassification.LEGACY_FALLBACK,
+                        multiplier,
+                        fallbackTicks,
+                        System.nanoTime() - adapterStart
+                    );
+                }
+                return !tile.isInvalid()
+                    && world.isBlockLoaded(pos, false)
+                    && world.getTileEntity(pos) == expectedTile;
+            }
             AdapterDispatch dispatch = registry.dispatchPrepared(
                 tile,
                 multiplier,
@@ -785,6 +814,10 @@ public final class WorldAccelerationManager {
         ) {
             AdapterRegistry.PreparedRoute previous =
                 routeTile == tile ? route : null;
+            if (previous != null
+                && previous.isCurrent(registry.getGeneration())) {
+                return previous;
+            }
             AdapterRegistry.PreparedRoute prepared =
                 registry.prepare(tile, previous);
             if (prepared.isReusable()) {

@@ -106,24 +106,14 @@ final class Ic2StandardMachineAdapter
 
     @Override
     public boolean supportsInstance(TileEntity tile) {
-        if (standardMachineClass == null
-            || access == null
-            || !inheritsBaseServerUpdate(tile, standardMachineClass)) {
-            return false;
-        }
-        try {
-            if (!access.hasNoUpgrades(tile)) {
-                return false;
-            }
-            return tile.getClass() == maceratorClass;
-        } catch (Throwable ignored) {
-            return false;
-        }
+        return access != null
+            && maceratorClass != null
+            && tile.getClass() == maceratorClass;
     }
 
     @Override
     public boolean canCacheSupportForInstance() {
-        return false;
+        return true;
     }
 
     @Override
@@ -132,7 +122,9 @@ final class Ic2StandardMachineAdapter
         int ticks,
         AccelerationContext context
     ) throws Exception {
-        if (access == null || !supportsInstance(tile)) {
+        if (access == null
+            || maceratorClass == null
+            || tile.getClass() != maceratorClass) {
             return AdvanceResult.fallback(ticks);
         }
         return advanceWithAccess(tile, ticks, access);
@@ -301,7 +293,7 @@ final class Ic2StandardMachineAdapter
         AdvanceResult advance(TileEntity tile, int ticks)
             throws AdapterExecutionException {
             int consumed = 0;
-            boolean changed = false;
+            boolean syncRequired = false;
             try {
                 if (!supports(tile) || !hasNoUpgrades(tile)) {
                     return AdvanceResult.fallback(ticks);
@@ -354,22 +346,25 @@ final class Ic2StandardMachineAdapter
                                 consumed,
                                 ticks - consumed,
                                 false,
-                                changed
+                                syncRequired
                             );
                         }
-                        setActive.invoke(tile, true);
+                        boolean active = (boolean) getActive.invoke(tile);
+                        if (!active) {
+                            setActive.invoke(tile, true);
+                        }
                         if (progress == 0) {
                             eventEmitter.emit(tile, 0);
                         }
                         progress += step;
                         consumed += step;
-                        changed = true;
                         progressSetter.invoke(tile, (short) progress);
                         if (progress >= operationLength) {
                             operate.invoke(tile, output);
                             progress = 0;
                             progressSetter.invoke(tile, (short) 0);
                             eventEmitter.emit(tile, 2);
+                            syncRequired = true;
                         }
                     } else {
                         if ((boolean) getActive.invoke(tile)) {
@@ -378,7 +373,6 @@ final class Ic2StandardMachineAdapter
                         if (output == null && progress != 0) {
                             progress = 0;
                             progressSetter.invoke(tile, (short) 0);
-                            changed = true;
                         }
                         setActive.invoke(tile, false);
                         consumed = ticks;
@@ -386,7 +380,7 @@ final class Ic2StandardMachineAdapter
                 }
 
                 updateGuiProgress(tile, progress, operationLength);
-                return AdvanceResult.consumed(ticks, changed);
+                return AdvanceResult.consumed(ticks, syncRequired);
             } catch (RuntimeException e) {
                 throw e;
             } catch (Error e) {

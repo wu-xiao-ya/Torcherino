@@ -25,6 +25,7 @@ final class CompatibilityClassificationTest {
             AdapterClassification.EXACT_BATCH,
             adapter.getClassification()
         );
+        assertEquals(5, adapter.getMinimumBatchTicks());
     }
 
     @Test

@@ -22,6 +22,7 @@ final class Ic2StandardMachineAdapterTest {
             AdapterClassification.EXACT_BATCH,
             adapter.getClassification()
         );
+        assertTrue(adapter.canCacheSupportForInstance());
     }
 
     @Test
@@ -120,6 +121,32 @@ final class Ic2StandardMachineAdapterTest {
         assertEquals(2, tile.progress);
         assertEquals(2, tile.input);
         assertEquals(0, tile.output);
+    }
+
+    @Test
+    void pureProgressDoesNotRequestChunkSync() throws Exception {
+        Ic2StandardMachineAdapter.Access access =
+            Ic2StandardMachineAdapter.Access.bind(
+                FakeStandardMachine.class,
+                new Ic2StandardMachineAdapter.EventEmitter() {
+                    @Override
+                    public void emit(TileEntity tile, int event) {
+                    }
+                }
+            );
+        FakeStandardSubclass tile = new FakeStandardSubclass();
+        tile.operationLength = 300;
+
+        AdvanceResult result = Ic2StandardMachineAdapter.advanceWithAccess(
+            tile,
+            4,
+            access
+        );
+
+        assertEquals(4, result.getConsumedTicks());
+        assertFalse(result.isSyncRequired());
+        assertEquals(4, tile.progress);
+        assertEquals(60.0D, tile.energy);
     }
 
     static class FakeStandardMachine extends TileEntity {

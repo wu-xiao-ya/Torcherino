@@ -10,9 +10,12 @@ import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidRegistry;
 import net.minecraftforge.fluids.FluidStack;
 import net.minecraftforge.fluids.FluidTank;
+import net.minecraftforge.energy.IEnergyStorage;
+import net.minecraftforge.items.ItemStackHandler;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ActuallyAdditionsProcessingAdapterTest {
@@ -31,7 +34,9 @@ final class ActuallyAdditionsProcessingAdapterTest {
         ActuallyAdditionsProcessingAuditAdapter.CanolaAccess access =
             ActuallyAdditionsProcessingAuditAdapter.CanolaAccess.bind(
                 FakeCanolaPress.class,
-                CANOLA_OIL
+                CANOLA_OIL,
+                Items.WHEAT,
+                0
             );
 
         AdvanceResult result =
@@ -60,7 +65,9 @@ final class ActuallyAdditionsProcessingAdapterTest {
         ActuallyAdditionsProcessingAuditAdapter.CanolaAccess access =
             ActuallyAdditionsProcessingAuditAdapter.CanolaAccess.bind(
                 FakeCanolaPress.class,
-                CANOLA_OIL
+                CANOLA_OIL,
+                Items.WHEAT,
+                0
             );
 
         ActuallyAdditionsProcessingAuditAdapter.advanceWithAccess(
@@ -72,6 +79,32 @@ final class ActuallyAdditionsProcessingAdapterTest {
         assertEquals(0, tile.currentProcessTime);
         assertEquals(10000, tile.storage.energy);
         assertEquals(1, tile.inv.getStackInSlot(0).getCount());
+    }
+
+    @Test
+    void canolaPureProgressDoesNotRequestChunkSync() throws Exception {
+        FakeCanolaPress tile = new FakeCanolaPress();
+        tile.inv.setStackInSlot(0, new ItemStack(Items.WHEAT, 1));
+        tile.storage.energy = 10000;
+        ActuallyAdditionsProcessingAuditAdapter.CanolaAccess access =
+            ActuallyAdditionsProcessingAuditAdapter.CanolaAccess.bind(
+                FakeCanolaPress.class,
+                CANOLA_OIL,
+                Items.WHEAT,
+                0
+            );
+
+        AdvanceResult result =
+            ActuallyAdditionsProcessingAuditAdapter.advanceWithAccess(
+                tile,
+                4,
+                access
+            );
+
+        assertEquals(4, result.getConsumedTicks());
+        assertFalse(result.isSyncRequired());
+        assertEquals(4, tile.currentProcessTime);
+        assertEquals(10000 - 4 * 35, tile.storage.energy);
     }
 
     @Test
@@ -101,6 +134,31 @@ final class ActuallyAdditionsProcessingAdapterTest {
         assertEquals(160, tile.oilTank.getFluidAmount());
     }
 
+    @Test
+    void barrelPureProgressDoesNotRequestChunkSync() throws Exception {
+        FakeFermentingBarrel tile = new FakeFermentingBarrel();
+        tile.canolaTank.fillInternal(
+            new FluidStack(CANOLA_OIL, 80),
+            true
+        );
+        ActuallyAdditionsProcessingAuditAdapter.BarrelAccess access =
+            ActuallyAdditionsProcessingAuditAdapter.BarrelAccess.bind(
+                FakeFermentingBarrel.class,
+                REFINED_OIL
+            );
+
+        AdvanceResult result =
+            ActuallyAdditionsProcessingAuditAdapter.advanceWithAccess(
+                tile,
+                4,
+                access
+            );
+
+        assertEquals(4, result.getConsumedTicks());
+        assertFalse(result.isSyncRequired());
+        assertEquals(4, tile.currentProcessTime);
+    }
+
     private static Fluid createFluid(String name) {
         Fluid fluid = new Fluid(
             name,
@@ -128,11 +186,37 @@ final class ActuallyAdditionsProcessingAdapterTest {
         public int currentProcessTime;
     }
 
-    static final class FakeEnergyStorage {
+    static final class FakeEnergyStorage implements IEnergyStorage {
         private int energy;
 
+        @Override
+        public int receiveEnergy(int maxReceive, boolean simulate) {
+            return 0;
+        }
+
+        @Override
+        public int extractEnergy(int maxExtract, boolean simulate) {
+            return extractEnergyInternal(maxExtract, simulate);
+        }
+
+        @Override
         public int getEnergyStored() {
             return energy;
+        }
+
+        @Override
+        public int getMaxEnergyStored() {
+            return 10000;
+        }
+
+        @Override
+        public boolean canExtract() {
+            return true;
+        }
+
+        @Override
+        public boolean canReceive() {
+            return false;
         }
 
         public int extractEnergyInternal(int amount, boolean simulate) {
@@ -144,15 +228,9 @@ final class ActuallyAdditionsProcessingAdapterTest {
         }
     }
 
-    static final class FakeInventory {
-        private ItemStack stack = ItemStack.EMPTY;
-
-        public ItemStack getStackInSlot(int slot) {
-            return stack;
-        }
-
-        public void setStackInSlot(int slot, ItemStack value) {
-            stack = value;
+    static final class FakeInventory extends ItemStackHandler {
+        private FakeInventory() {
+            super(1);
         }
     }
 }

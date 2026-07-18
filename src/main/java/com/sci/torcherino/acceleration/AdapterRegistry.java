@@ -93,6 +93,9 @@ public final class AdapterRegistry {
             if (entry.adapter.getClassification() == AdapterClassification.BLACKLIST) {
                 return route.dispatch(AdvanceResult.invalidated(0));
             }
+            if (ticks < entry.adapter.getMinimumBatchTicks()) {
+                return route.dispatch(AdvanceResult.fallback(ticks));
+            }
             try {
                 AdvanceResult result = validate(entry.advance(tile, ticks, context), ticks);
                 return route.dispatch(result);
@@ -136,10 +139,7 @@ public final class AdapterRegistry {
 
     PreparedRoute prepare(TileEntity tile, PreparedRoute previous) {
         long currentGeneration = generation;
-        if (previous != null
-            && previous.reusable
-            && previous.generation == currentGeneration
-            && (previous.entry == null || previous.entry.enabled)) {
+        if (previous != null && previous.isCurrent(currentGeneration)) {
             return previous;
         }
         if (tile instanceof IBatchedAcceleratable) {
@@ -178,6 +178,10 @@ public final class AdapterRegistry {
             ));
         }
         return Collections.unmodifiableList(reports);
+    }
+
+    long getGeneration() {
+        return generation;
     }
 
     private void sortEntries() {
@@ -259,6 +263,7 @@ public final class AdapterRegistry {
         private final String adapterId;
         private final AdapterClassification classification;
         private final boolean blacklisted;
+        private final int minimumBatchTicks;
         private AdvanceResult cachedResult;
         private AdapterDispatch cachedDispatch;
 
@@ -269,7 +274,8 @@ public final class AdapterRegistry {
             boolean reusable,
             String adapterId,
             AdapterClassification classification,
-            boolean blacklisted
+            boolean blacklisted,
+            int minimumBatchTicks
         ) {
             this.generation = generation;
             this.entry = entry;
@@ -278,6 +284,7 @@ public final class AdapterRegistry {
             this.adapterId = adapterId;
             this.classification = classification;
             this.blacklisted = blacklisted;
+            this.minimumBatchTicks = minimumBatchTicks;
         }
 
         private static PreparedRoute cooperative(long generation) {
@@ -288,7 +295,8 @@ public final class AdapterRegistry {
                 true,
                 "cooperative-api",
                 AdapterClassification.EXACT_BATCH,
-                false
+                false,
+                1
             );
         }
 
@@ -306,7 +314,8 @@ public final class AdapterRegistry {
                 reusable,
                 entry.adapter.getId(),
                 classification,
-                classification == AdapterClassification.BLACKLIST
+                classification == AdapterClassification.BLACKLIST,
+                entry.adapter.getMinimumBatchTicks()
             );
         }
 
@@ -318,12 +327,27 @@ public final class AdapterRegistry {
                 reusable,
                 "legacy-update",
                 AdapterClassification.LEGACY_FALLBACK,
-                false
+                false,
+                1
             );
         }
 
         boolean isReusable() {
             return reusable;
+        }
+
+        boolean isCurrent(long currentGeneration) {
+            return reusable
+                && generation == currentGeneration
+                && (entry == null || entry.enabled);
+        }
+
+        boolean usesLegacyBelow(int ticks) {
+            return ticks < minimumBatchTicks;
+        }
+
+        String getAdapterId() {
+            return adapterId;
         }
 
         private AdapterDispatch dispatch(AdvanceResult result) {

@@ -6,19 +6,22 @@ import com.sci.torcherino.api.AdapterExecutionException;
 import com.sci.torcherino.api.AdapterProbe;
 import com.sci.torcherino.api.AdvanceResult;
 import com.sci.torcherino.api.IExactAccelerationAdapter;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidStack;
 import net.minecraftforge.fluids.FluidTank;
+import net.minecraftforge.energy.IEnergyStorage;
 import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.fml.common.ModContainer;
+import net.minecraftforge.items.IItemHandlerModifiable;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 
 final class ActuallyAdditionsProcessingAuditAdapter
     implements IExactAccelerationAdapter<TileEntity> {
@@ -33,6 +36,10 @@ final class ActuallyAdditionsProcessingAuditAdapter
         "3a58490f763cb3cf5fe9b9b87156973efca1b61898c046e1e367d9482672fe78";
     private static final String FLUIDS_CLASS =
         "de.ellpeck.actuallyadditions.mod.fluids.InitFluids";
+    private static final String ITEMS_CLASS =
+        "de.ellpeck.actuallyadditions.mod.items.InitItems";
+    private static final String MISC_ITEMS_CLASS =
+        "de.ellpeck.actuallyadditions.mod.items.metalists.TheMiscItems";
 
     private CanolaAccess canolaAccess;
     private BarrelAccess barrelAccess;
@@ -86,9 +93,19 @@ final class ActuallyAdditionsProcessingAuditAdapter
                 fluidsClass,
                 "fluidRefinedCanolaOil"
             );
+            Item canolaItem = (Item) readStaticField(
+                loader.loadClass(ITEMS_CLASS),
+                "itemMisc"
+            );
+            int canolaMetadata = ((Enum<?>) readStaticField(
+                loader.loadClass(MISC_ITEMS_CLASS),
+                "CANOLA"
+            )).ordinal();
             canolaAccess = CanolaAccess.bind(
                 loader.loadClass(CANOLA_CLASS),
-                canolaOil
+                canolaOil,
+                canolaItem,
+                canolaMetadata
             );
             barrelAccess = BarrelAccess.bind(
                 loader.loadClass(BARREL_CLASS),
@@ -99,7 +116,8 @@ final class ActuallyAdditionsProcessingAuditAdapter
                     + "/canola#" + CANOLA_SIGNATURE.substring(0, 12)
                     + "/barrel#" + BARREL_SIGNATURE.substring(0, 12),
                 "boundary batch for Canola Press and Fermenting Barrel; "
-                    + "neighbor fluid and energy sharing remains real-tick only"
+                    + "x1-x4 use exact legacy ticks; neighbor fluid and "
+                    + "energy sharing remains real-tick only"
             );
         } catch (ReflectiveOperationException e) {
             clearAccess();
@@ -123,6 +141,11 @@ final class ActuallyAdditionsProcessingAuditAdapter
     @Override
     public boolean canCacheSupportForInstance() {
         return true;
+    }
+
+    @Override
+    public int getMinimumBatchTicks() {
+        return 5;
     }
 
     @Override
@@ -229,12 +252,10 @@ final class ActuallyAdditionsProcessingAuditAdapter
         private final MethodHandle inventoryGetter;
         private final MethodHandle progressGetter;
         private final MethodHandle progressSetter;
-        private final MethodHandle getEnergy;
         private final MethodHandle extractEnergy;
-        private final MethodHandle getStack;
-        private final MethodHandle setStack;
-        private final MethodHandle isCanola;
         private final Fluid outputFluid;
+        private final Item canolaItem;
+        private final int canolaMetadata;
 
         private CanolaAccess(
             Class<?> ownerClass,
@@ -243,12 +264,10 @@ final class ActuallyAdditionsProcessingAuditAdapter
             MethodHandle inventoryGetter,
             MethodHandle progressGetter,
             MethodHandle progressSetter,
-            MethodHandle getEnergy,
             MethodHandle extractEnergy,
-            MethodHandle getStack,
-            MethodHandle setStack,
-            MethodHandle isCanola,
-            Fluid outputFluid
+            Fluid outputFluid,
+            Item canolaItem,
+            int canolaMetadata
         ) {
             this.ownerClass = ownerClass;
             this.storageGetter = storageGetter;
@@ -256,58 +275,82 @@ final class ActuallyAdditionsProcessingAuditAdapter
             this.inventoryGetter = inventoryGetter;
             this.progressGetter = progressGetter;
             this.progressSetter = progressSetter;
-            this.getEnergy = getEnergy;
             this.extractEnergy = extractEnergy;
-            this.getStack = getStack;
-            this.setStack = setStack;
-            this.isCanola = isCanola;
             this.outputFluid = outputFluid;
+            this.canolaItem = canolaItem;
+            this.canolaMetadata = canolaMetadata;
         }
 
-        static CanolaAccess bind(Class<?> ownerClass, Fluid outputFluid)
+        static CanolaAccess bind(
+            Class<?> ownerClass,
+            Fluid outputFluid,
+            Item canolaItem,
+            int canolaMetadata
+        )
             throws ReflectiveOperationException {
             MethodHandles.Lookup lookup = MethodHandles.lookup();
             Field storage = findField(ownerClass, "storage");
             Field tank = findField(ownerClass, "tank");
             Field inventory = findField(ownerClass, "inv");
             Field progress = findField(ownerClass, "currentProcessTime");
-            Method getEnergyMethod = findMethod(
-                storage.getType(),
-                "getEnergyStored",
-                0
-            );
             Method extractMethod = findMethod(
                 storage.getType(),
                 "extractEnergyInternal",
                 2
             );
-            Method getStackMethod = findMethod(
-                inventory.getType(),
-                "getStackInSlot",
-                1
-            );
-            Method setStackMethod = findMethod(
-                inventory.getType(),
-                "setStackInSlot",
-                2
-            );
-            Method isCanolaMethod = findMethod(ownerClass, "isCanola", 1);
-            if (!Modifier.isStatic(isCanolaMethod.getModifiers())) {
-                throw new NoSuchMethodException("isCanola is not static");
+            if (!IEnergyStorage.class.isAssignableFrom(storage.getType())) {
+                throw new NoSuchFieldException(
+                    "storage does not implement IEnergyStorage"
+                );
+            }
+            if (!IItemHandlerModifiable.class.isAssignableFrom(
+                inventory.getType()
+            )) {
+                throw new NoSuchFieldException(
+                    "inv does not implement IItemHandlerModifiable"
+                );
             }
             return new CanolaAccess(
                 ownerClass,
-                lookup.unreflectGetter(storage),
-                lookup.unreflectGetter(tank),
-                lookup.unreflectGetter(inventory),
-                lookup.unreflectGetter(progress),
-                lookup.unreflectSetter(progress),
-                lookup.unreflect(getEnergyMethod),
-                lookup.unreflect(extractMethod),
-                lookup.unreflect(getStackMethod),
-                lookup.unreflect(setStackMethod),
-                lookup.unreflect(isCanolaMethod),
-                outputFluid
+                lookup.unreflectGetter(storage).asType(
+                    MethodType.methodType(
+                        IEnergyStorage.class,
+                        TileEntity.class
+                    )
+                ),
+                lookup.unreflectGetter(tank).asType(
+                    MethodType.methodType(
+                        FluidTank.class,
+                        TileEntity.class
+                    )
+                ),
+                lookup.unreflectGetter(inventory).asType(
+                    MethodType.methodType(
+                        IItemHandlerModifiable.class,
+                        TileEntity.class
+                    )
+                ),
+                lookup.unreflectGetter(progress).asType(
+                    MethodType.methodType(int.class, TileEntity.class)
+                ),
+                lookup.unreflectSetter(progress).asType(
+                    MethodType.methodType(
+                        void.class,
+                        TileEntity.class,
+                        int.class
+                    )
+                ),
+                lookup.unreflect(extractMethod).asType(
+                    MethodType.methodType(
+                        int.class,
+                        IEnergyStorage.class,
+                        int.class,
+                        boolean.class
+                    )
+                ),
+                outputFluid,
+                canolaItem,
+                canolaMetadata
             );
         }
 
@@ -319,33 +362,35 @@ final class ActuallyAdditionsProcessingAuditAdapter
         @Override
         public AdvanceResult advance(TileEntity tile, int ticks)
             throws Throwable {
-            Object storage = storageGetter.invoke(tile);
-            FluidTank tank = (FluidTank) tankGetter.invoke(tile);
-            Object inventory = inventoryGetter.invoke(tile);
-            int progress = (int) progressGetter.invoke(tile);
+            IEnergyStorage storage =
+                (IEnergyStorage) storageGetter.invokeExact(tile);
+            FluidTank tank = (FluidTank) tankGetter.invokeExact(tile);
+            IItemHandlerModifiable inventory =
+                (IItemHandlerModifiable) inventoryGetter.invokeExact(tile);
+            int progress = (int) progressGetter.invokeExact(tile);
             int consumed = 0;
-            boolean changed = false;
+            boolean syncRequired = false;
 
             while (consumed < ticks) {
                 if (tile.isInvalid()) {
-                    progressSetter.invoke(tile, progress);
+                    progressSetter.invokeExact(tile, progress);
                     return AdvanceResult.invalidated(consumed);
                 }
-                ItemStack input = (ItemStack) getStack.invoke(inventory, 0);
+                ItemStack input = inventory.getStackInSlot(0);
                 boolean canProcess = !input.isEmpty()
-                    && (boolean) isCanola.invoke(input)
+                    && input.getItem() == canolaItem
+                    && input.getMetadata() == canolaMetadata
                     && tank.getCapacity() - tank.getFluidAmount()
                         >= FLUID_PER_OPERATION;
                 if (!canProcess) {
                     if (progress != 0) {
                         progress = 0;
-                        changed = true;
                     }
                     consumed = ticks;
                     break;
                 }
 
-                int affordable = ((int) getEnergy.invoke(storage))
+                int affordable = storage.getEnergyStored()
                     / ENERGY_PER_TICK;
                 if (affordable <= 0) {
                     consumed = ticks;
@@ -355,21 +400,19 @@ final class ActuallyAdditionsProcessingAuditAdapter
                     ticks - consumed,
                     Math.min(affordable, PROCESS_TICKS - progress)
                 );
-                extractEnergy.invoke(
+                int extracted = (int) extractEnergy.invokeExact(
                     storage,
                     step * ENERGY_PER_TICK,
                     false
                 );
                 progress += step;
                 consumed += step;
-                changed = true;
 
                 if (progress >= PROCESS_TICKS) {
                     progress = 0;
                     ItemStack reduced = input.copy();
                     reduced.shrink(1);
-                    setStack.invoke(
-                        inventory,
+                    inventory.setStackInSlot(
                         0,
                         reduced.isEmpty() ? ItemStack.EMPTY : reduced
                     );
@@ -377,11 +420,12 @@ final class ActuallyAdditionsProcessingAuditAdapter
                         new FluidStack(outputFluid, FLUID_PER_OPERATION),
                         true
                     );
+                    syncRequired = true;
                 }
             }
 
-            progressSetter.invoke(tile, progress);
-            return AdvanceResult.consumed(ticks, changed);
+            progressSetter.invokeExact(tile, progress);
+            return AdvanceResult.consumed(ticks, syncRequired);
         }
     }
 
@@ -420,10 +464,28 @@ final class ActuallyAdditionsProcessingAuditAdapter
             Field progress = findField(ownerClass, "currentProcessTime");
             return new BarrelAccess(
                 ownerClass,
-                lookup.unreflectGetter(inputTank),
-                lookup.unreflectGetter(outputTank),
-                lookup.unreflectGetter(progress),
-                lookup.unreflectSetter(progress),
+                lookup.unreflectGetter(inputTank).asType(
+                    MethodType.methodType(
+                        FluidTank.class,
+                        TileEntity.class
+                    )
+                ),
+                lookup.unreflectGetter(outputTank).asType(
+                    MethodType.methodType(
+                        FluidTank.class,
+                        TileEntity.class
+                    )
+                ),
+                lookup.unreflectGetter(progress).asType(
+                    MethodType.methodType(int.class, TileEntity.class)
+                ),
+                lookup.unreflectSetter(progress).asType(
+                    MethodType.methodType(
+                        void.class,
+                        TileEntity.class,
+                        int.class
+                    )
+                ),
                 outputFluid
             );
         }
@@ -436,15 +498,17 @@ final class ActuallyAdditionsProcessingAuditAdapter
         @Override
         public AdvanceResult advance(TileEntity tile, int ticks)
             throws Throwable {
-            FluidTank inputTank = (FluidTank) inputTankGetter.invoke(tile);
-            FluidTank outputTank = (FluidTank) outputTankGetter.invoke(tile);
-            int progress = (int) progressGetter.invoke(tile);
+            FluidTank inputTank =
+                (FluidTank) inputTankGetter.invokeExact(tile);
+            FluidTank outputTank =
+                (FluidTank) outputTankGetter.invokeExact(tile);
+            int progress = (int) progressGetter.invokeExact(tile);
             int consumed = 0;
-            boolean changed = false;
+            boolean syncRequired = false;
 
             while (consumed < ticks) {
                 if (tile.isInvalid()) {
-                    progressSetter.invoke(tile, progress);
+                    progressSetter.invokeExact(tile, progress);
                     return AdvanceResult.invalidated(consumed);
                 }
                 boolean canProcess =
@@ -455,7 +519,6 @@ final class ActuallyAdditionsProcessingAuditAdapter
                 if (!canProcess) {
                     if (progress != 0) {
                         progress = 0;
-                        changed = true;
                     }
                     consumed = ticks;
                     break;
@@ -467,7 +530,6 @@ final class ActuallyAdditionsProcessingAuditAdapter
                 );
                 progress += step;
                 consumed += step;
-                changed = true;
 
                 if (progress >= PROCESS_TICKS) {
                     progress = 0;
@@ -476,11 +538,12 @@ final class ActuallyAdditionsProcessingAuditAdapter
                         true
                     );
                     inputTank.drainInternal(FLUID_PER_OPERATION, true);
+                    syncRequired = true;
                 }
             }
 
-            progressSetter.invoke(tile, progress);
-            return AdvanceResult.consumed(ticks, changed);
+            progressSetter.invokeExact(tile, progress);
+            return AdvanceResult.consumed(ticks, syncRequired);
         }
     }
 }

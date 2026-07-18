@@ -55,7 +55,8 @@ configurations {
 
 sourceSets {
     benchmarkHarness {
-        compileClasspath += sourceSets.main.compileClasspath
+        compileClasspath +=
+            sourceSets.main.output + sourceSets.main.compileClasspath
         runtimeClasspath += output + compileClasspath
     }
 }
