@@ -26,16 +26,30 @@ final class DiscoveryWheel {
             forced = false;
         }
 
-        int slice = (int) ((long) phase * slices / interval);
-        int previousSlice = phase == 0
-            ? -1
-            : (int) ((long) (phase - 1) * slices / interval);
-        scheduledBatch = phase == 0 || slice != previousSlice;
-        if (scheduledBatch) {
-            batchStart = partition(normalizedTargetCount, slice, slices);
-            batchEnd = partition(normalizedTargetCount, slice + 1, slices);
+        if (slices == 1) {
+            scheduledBatch = phase == 0;
+            if (scheduledBatch) {
+                batchStart = 0;
+                batchEnd = normalizedTargetCount;
+            } else {
+                batchStart = batchEnd;
+            }
         } else {
-            batchStart = batchEnd;
+            int slice = (int) ((long) phase * slices / interval);
+            int previousSlice = phase == 0
+                ? -1
+                : (int) ((long) (phase - 1) * slices / interval);
+            scheduledBatch = phase == 0 || slice != previousSlice;
+            if (scheduledBatch) {
+                batchStart = partition(normalizedTargetCount, slice, slices);
+                batchEnd = partition(
+                    normalizedTargetCount,
+                    slice + 1,
+                    slices
+                );
+            } else {
+                batchStart = batchEnd;
+            }
         }
         int nextPhase = phase + 1;
         completedCycle = nextPhase >= interval;

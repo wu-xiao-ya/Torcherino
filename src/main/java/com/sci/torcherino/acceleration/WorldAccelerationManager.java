@@ -95,6 +95,9 @@ public final class WorldAccelerationManager {
 
     public void tick() {
         applyCompletedPlan();
+        if (traversalTargets.length == 0 && discoveredTargetCount == 0) {
+            return;
+        }
         long managerStart = System.nanoTime();
         ticking = true;
         try {
@@ -273,14 +276,18 @@ public final class WorldAccelerationManager {
         AccelerationProfiler profiler,
         boolean profiling
     ) {
+        TargetExecutionContext[] targets = discoveredTargets;
+        int[] multipliers = discoveredMultipliers;
+        int count = discoveredTargetCount;
         int index = 0;
-        while (index < discoveredTargetCount) {
-            TargetExecutionContext context = discoveredTargets[index];
-            int multiplier = discoveredMultipliers[index];
+        while (index < count) {
+            TargetExecutionContext context = targets[index];
+            int multiplier = multipliers[index];
             if (tickTarget(context, multiplier, profiler, profiling)) {
                 index++;
             } else {
                 removeDiscoveredTargetAt(index);
+                count = discoveredTargetCount;
             }
         }
     }

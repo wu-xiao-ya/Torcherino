@@ -142,6 +142,29 @@ final class DiscoveryWheelTest {
     }
 
     @Test
+    void singleSliceScansOnlyAtTheStartOfEachCycle() {
+        DiscoveryWheel wheel = new DiscoveryWheel();
+        int scanned = 0;
+        int scheduled = 0;
+
+        for (int tick = 0; tick < 20; tick++) {
+            wheel.advance(243, 20, 1);
+            if (wheel.hasScheduledBatch()) {
+                scheduled++;
+                scanned += wheel.getBatchSize();
+                assertEquals(0, wheel.getBatchStart());
+                assertEquals(243, wheel.getBatchEnd());
+            } else {
+                assertEquals(0, wheel.getBatchSize());
+            }
+        }
+
+        assertEquals(1, scheduled);
+        assertEquals(243, scanned);
+        assertTrue(wheel.completedCycle());
+    }
+
+    @Test
     void slicesAreClampedToTheInterval() {
         DiscoveryWheel wheel = new DiscoveryWheel();
 
