@@ -28,7 +28,7 @@ public final class BenchmarkCommand extends CommandBase {
     public String getUsage(ICommandSender sender) {
         return "/torcherino-bench <run furnace-suite "
             + "[all|vanilla|thermal1|thermal|thermal80|enderio] [diagnostic|timing]"
-            + "|status|export [path]>";
+            + "|verify adapters|status|export [path]>";
     }
 
     @Override
@@ -55,6 +55,10 @@ public final class BenchmarkCommand extends CommandBase {
             export(sender, args);
             return;
         }
+        if ("verify".equalsIgnoreCase(args[0])) {
+            verify(server, sender, args);
+            return;
+        }
 
         throw new CommandException(getUsage(sender));
     }
@@ -67,7 +71,16 @@ public final class BenchmarkCommand extends CommandBase {
         @Nullable BlockPos targetPos
     ) {
         if (args.length == 1) {
-            return getListOfStringsMatchingLastWord(args, "run", "status", "export");
+            return getListOfStringsMatchingLastWord(
+                args,
+                "run",
+                "verify",
+                "status",
+                "export"
+            );
+        }
+        if (args.length == 2 && "verify".equalsIgnoreCase(args[0])) {
+            return getListOfStringsMatchingLastWord(args, "adapters");
         }
         if (args.length == 2 && "run".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "furnace-suite");
@@ -120,6 +133,19 @@ public final class BenchmarkCommand extends CommandBase {
             : controller.defaultExportDirectory();
         BenchmarkController.ExportResult result = controller.export(target);
         send(sender, result.getMessage());
+    }
+
+    private void verify(
+        MinecraftServer server,
+        ICommandSender sender,
+        String[] args
+    ) throws CommandException {
+        if (args.length != 2 || !"adapters".equalsIgnoreCase(args[1])) {
+            throw new CommandException("/torcherino-bench verify adapters");
+        }
+        for (String line : AdapterDifferentialVerifier.verify(server)) {
+            send(sender, line);
+        }
     }
 
     private static void send(ICommandSender sender, String message) {
