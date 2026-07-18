@@ -22,6 +22,7 @@ import net.minecraftforge.fluids.FluidTank;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -29,6 +30,10 @@ final class AdapterDifferentialVerifier {
     private static final BlockPos LEGACY_POS = new BlockPos(160, 80, 160);
     private static final BlockPos ADAPTER_POS = new BlockPos(162, 80, 160);
     private static final int[] TICK_COUNTS = new int[]{1, 4, 36, 324};
+    private static final int[] PERFORMANCE_TICK_COUNTS =
+        new int[]{4, 36, 324};
+    private static final int PERFORMANCE_WARMUP_SAMPLES = 8;
+    private static final int PERFORMANCE_MEASURED_SAMPLES = 40;
 
     private AdapterDifferentialVerifier() {
     }
@@ -69,6 +74,201 @@ final class AdapterDifferentialVerifier {
         }
         lines.add("SUMMARY " + passed + "/" + total + " passed");
         return lines;
+    }
+
+    static List<String> benchmark(MinecraftServer server) {
+        List<String> lines = new ArrayList<String>();
+        WorldServer world = server.getWorld(0);
+        if (world == null) {
+            lines.add("FAIL no overworld is available");
+            return lines;
+        }
+
+        SavedBlock legacyOriginal = SavedBlock.capture(world, LEGACY_POS);
+        SavedBlock adapterOriginal = SavedBlock.capture(world, ADAPTER_POS);
+        lines.add(
+            "Torcherino adapter machine-path benchmark "
+                + "(warmup=" + PERFORMANCE_WARMUP_SAMPLES
+                + ", samples=" + PERFORMANCE_MEASURED_SAMPLES + ")"
+        );
+        try {
+            for (MachineKind kind : MachineKind.values()) {
+                for (int ticks : PERFORMANCE_TICK_COUNTS) {
+                    lines.add(benchmarkCase(world, kind, ticks).describe());
+                }
+            }
+        } finally {
+            legacyOriginal.restore(world, LEGACY_POS);
+            adapterOriginal.restore(world, ADAPTER_POS);
+        }
+        lines.add(
+            "NOTE timings cover extra machine processing only; "
+                + "scene reset and state comparison are excluded"
+        );
+        return lines;
+    }
+
+    private static PerformanceResult benchmarkCase(
+        WorldServer world,
+        MachineKind kind,
+        int ticks
+    ) {
+        try {
+            clearTestPositions(world);
+            TileEntity legacy = kind.create(world, LEGACY_POS);
+            TileEntity accelerated = kind.create(world, ADAPTER_POS);
+            PreparedDispatch prepared = preparedDispatch(
+                accelerated,
+                kind.refreshRouteEachDispatch
+            );
+            int repetitions = repetitionsFor(ticks);
+
+            for (int sample = 0; sample < PERFORMANCE_WARMUP_SAMPLES; sample++) {
+                runPerformanceSample(
+                    kind,
+                    legacy,
+                    accelerated,
+                    prepared,
+                    ticks,
+                    repetitions,
+                    sample
+                );
+            }
+
+            long[] legacySamples =
+                new long[PERFORMANCE_MEASURED_SAMPLES];
+            long[] adapterSamples =
+                new long[PERFORMANCE_MEASURED_SAMPLES];
+            for (int sample = 0;
+                 sample < PERFORMANCE_MEASURED_SAMPLES;
+                 sample++) {
+                PerformanceSample result = runPerformanceSample(
+                    kind,
+                    legacy,
+                    accelerated,
+                    prepared,
+                    ticks,
+                    repetitions,
+                    sample + PERFORMANCE_WARMUP_SAMPLES
+                );
+                legacySamples[sample] = result.legacyNanos / repetitions;
+                adapterSamples[sample] = result.adapterNanos / repetitions;
+            }
+
+            return PerformanceResult.success(
+                kind.id,
+                ticks,
+                repetitions,
+                percentile(legacySamples, 0.50D),
+                percentile(legacySamples, 0.95D),
+                percentile(adapterSamples, 0.50D),
+                percentile(adapterSamples, 0.95D)
+            );
+        } catch (Throwable failure) {
+            return PerformanceResult.failure(
+                kind.id,
+                ticks,
+                failure.getClass().getSimpleName() + ": "
+                    + String.valueOf(failure.getMessage())
+            );
+        }
+    }
+
+    private static PerformanceSample runPerformanceSample(
+        MachineKind kind,
+        TileEntity legacy,
+        TileEntity accelerated,
+        PreparedDispatch prepared,
+        int ticks,
+        int repetitions,
+        int sampleIndex
+    ) throws Exception {
+        long legacyNanos = 0L;
+        long adapterNanos = 0L;
+        for (int repetition = 0; repetition < repetitions; repetition++) {
+            resetAndPrime(kind, legacy);
+            resetAndPrime(kind, accelerated);
+
+            if (((sampleIndex + repetition) & 1) == 0) {
+                legacyNanos += timeLegacy(kind, legacy, ticks);
+                adapterNanos += timeAdapter(
+                    kind,
+                    accelerated,
+                    prepared,
+                    ticks
+                );
+            } else {
+                adapterNanos += timeAdapter(
+                    kind,
+                    accelerated,
+                    prepared,
+                    ticks
+                );
+                legacyNanos += timeLegacy(kind, legacy, ticks);
+            }
+        }
+
+        String legacyState = kind.snapshot(legacy);
+        String acceleratedState = kind.snapshot(accelerated);
+        if (!legacyState.equals(acceleratedState)) {
+            throw new IllegalStateException(
+                "state-mismatch legacy=" + legacyState
+                    + " adapter=" + acceleratedState
+            );
+        }
+        return new PerformanceSample(legacyNanos, adapterNanos);
+    }
+
+    private static void resetAndPrime(
+        MachineKind kind,
+        TileEntity tile
+    ) throws Exception {
+        kind.initialize(tile);
+        runTickableLegacy(tile, 1);
+    }
+
+    private static long timeLegacy(
+        MachineKind kind,
+        TileEntity tile,
+        int ticks
+    ) throws Exception {
+        long start = System.nanoTime();
+        kind.runLegacy(tile, ticks);
+        return System.nanoTime() - start;
+    }
+
+    private static long timeAdapter(
+        MachineKind kind,
+        TileEntity tile,
+        PreparedDispatch prepared,
+        int ticks
+    ) throws Exception {
+        try {
+            return prepared.timeAdvance(tile, ticks);
+        } catch (Exception failure) {
+            throw new IllegalStateException(
+                String.valueOf(failure.getMessage())
+                    + " state=" + kind.snapshot(tile),
+                failure
+            );
+        }
+    }
+
+    private static int repetitionsFor(int ticks) {
+        if (ticks <= 4) {
+            return 64;
+        }
+        if (ticks <= 36) {
+            return 16;
+        }
+        return 4;
+    }
+
+    private static long percentile(long[] values, double percentile) {
+        long[] sorted = values.clone();
+        Arrays.sort(sorted);
+        int index = (int) Math.ceil(percentile * sorted.length) - 1;
+        return sorted[Math.max(0, Math.min(index, sorted.length - 1))];
     }
 
     private static VerificationResult verifyCase(
@@ -155,7 +355,7 @@ final class AdapterDifferentialVerifier {
             boolean fallback = dispatch.consumedTicks == 0
                 && dispatch.fallbackTicks == 36
                 && !dispatch.invalidated
-                && !"ic2:standard-machine-no-upgrade-loop".equals(
+                && !"ic2:macerator-no-upgrade-batch".equals(
                     dispatch.adapterId
                 );
             return fallback
@@ -195,50 +395,21 @@ final class AdapterDifferentialVerifier {
 
     private static void runIc2Legacy(TileEntity tile, int ticks)
         throws Exception {
-        for (int tick = 0; tick < ticks; tick++) {
-            invoke(tile, "updateEntityServer");
-        }
+        runTickableLegacy(tile, ticks);
     }
 
     private static DispatchResult dispatch(TileEntity tile, int ticks)
         throws Exception {
-        ClassLoader loader = AdapterDifferentialVerifier.class.getClassLoader();
-        Class<?> registryClass = loader.loadClass(
-            "com.sci.torcherino.acceleration.AdapterRegistry"
-        );
-        Class<?> contextClass = loader.loadClass(
-            "com.sci.torcherino.api.AccelerationContext"
-        );
-        Object context = contextClass
-            .getConstructor(WorldServer.class, BlockPos.class)
-            .newInstance(tile.getWorld(), tile.getPos());
-        Method dispatch = registryClass.getDeclaredMethod(
-            "dispatch",
-            TileEntity.class,
-            int.class,
-            contextClass
-        );
-        dispatch.setAccessible(true);
-        Object registry = registryClass.getMethod("getInstance").invoke(null);
-        Object value = dispatch.invoke(
-            registry,
+        return DispatchBridge.get().dispatch(tile, ticks);
+    }
+
+    private static PreparedDispatch preparedDispatch(
+        TileEntity tile,
+        boolean refreshRouteEachDispatch
+    ) throws Exception {
+        return DispatchBridge.get().prepare(
             tile,
-            ticks,
-            context
-        );
-        Method adapterId = value.getClass().getDeclaredMethod("getAdapterId");
-        Method result = value.getClass().getDeclaredMethod("getResult");
-        adapterId.setAccessible(true);
-        result.setAccessible(true);
-        Object advance = result.invoke(value);
-        Method consumed = advance.getClass().getMethod("getConsumedTicks");
-        Method fallback = advance.getClass().getMethod("getFallbackTicks");
-        Method invalidated = advance.getClass().getMethod("isInvalidated");
-        return new DispatchResult(
-            String.valueOf(adapterId.invoke(value)),
-            ((Number) consumed.invoke(advance)).intValue(),
-            ((Number) fallback.invoke(advance)).intValue(),
-            (Boolean) invalidated.invoke(advance)
+            refreshRouteEachDispatch
         );
     }
 
@@ -318,8 +489,16 @@ final class AdapterDifferentialVerifier {
             "de.ellpeck.actuallyadditions.mod.items.metalists.TheMiscItems"
         ).getField("CANOLA").get(null);
         int metadata = ((Enum<?>) canola).ordinal();
-        invoke(inventory, "setStackInSlot", 0, new ItemStack(item, 16, metadata));
-        fillForgeEnergy(tile);
+        invoke(inventory, "setStackInSlot", 0, new ItemStack(item, 64, metadata));
+        IEnergyStorage energy = tile.getCapability(
+            CapabilityEnergy.ENERGY,
+            null
+        );
+        if (energy == null) {
+            throw new IllegalStateException("missing Forge Energy capability");
+        }
+        Object storage = readField(tile, "storage");
+        invoke(storage, "setEnergyStored", energy.getMaxEnergyStored());
         ((FluidTank) readField(tile, "tank")).drainInternal(
             Integer.MAX_VALUE,
             true
@@ -343,6 +522,7 @@ final class AdapterDifferentialVerifier {
         TileEntity tile,
         ItemStack input
     ) throws Exception {
+        ensureIc2Loaded(tile);
         Object inputSlot = readField(tile, "inputSlot");
         Object outputSlot = readField(tile, "outputSlot");
         Object upgradeSlot = readField(tile, "upgradeSlot");
@@ -351,29 +531,26 @@ final class AdapterDifferentialVerifier {
         invoke(upgradeSlot, "clear");
         invoke(inputSlot, "put", input);
         Object energy = readField(tile, "energy");
+        double stored = ((Number) invoke(energy, "getEnergy")).doubleValue();
+        if (stored > 0.0D) {
+            invoke(energy, "useEnergy", stored);
+        }
         double capacity = ((Number) invoke(energy, "getCapacity")).doubleValue();
         invoke(energy, "forceAddEnergy", capacity);
         writeShortField(tile, "progress", (short) 0);
+        findField(tile.getClass(), "guiProgress").setFloat(tile, 0.0F);
+        invoke(tile, "setActive", false);
         invoke(tile, "setOverclockRates");
     }
 
-    private static void fillForgeEnergy(TileEntity tile) {
-        IEnergyStorage energy = tile.getCapability(
-            CapabilityEnergy.ENERGY,
-            null
-        );
-        if (energy == null) {
-            throw new IllegalStateException("missing Forge Energy capability");
-        }
-        int guard = 0;
-        while (energy.getEnergyStored() < energy.getMaxEnergyStored()
-            && guard++ < 1000) {
-            if (energy.receiveEnergy(Integer.MAX_VALUE, false) <= 0) {
-                break;
-            }
-        }
-        if (energy.getEnergyStored() <= 0) {
-            throw new IllegalStateException("unable to precharge machine");
+    private static void ensureIc2Loaded(TileEntity tile) throws Exception {
+        byte loadState = findField(tile.getClass(), "loadState").getByte(tile);
+        if (loadState == 1) {
+            invoke(tile, "onLoaded");
+        } else if (loadState != 2) {
+            throw new IllegalStateException(
+                "unexpected IC2 load state " + loadState
+            );
         }
     }
 
@@ -552,7 +729,8 @@ final class AdapterDifferentialVerifier {
     private enum MachineKind {
         AA_CANOLA(
             "aa-canola-press",
-            "actuallyadditions:processing-batch"
+            "actuallyadditions:processing-batch",
+            false
         ) {
             @Override
             TileEntity create(WorldServer world, BlockPos pos) throws Exception {
@@ -575,7 +753,8 @@ final class AdapterDifferentialVerifier {
         },
         AA_BARREL(
             "aa-fermenting-barrel",
-            "actuallyadditions:processing-batch"
+            "actuallyadditions:processing-batch",
+            false
         ) {
             @Override
             TileEntity create(WorldServer world, BlockPos pos) throws Exception {
@@ -598,7 +777,8 @@ final class AdapterDifferentialVerifier {
         },
         IC2_MACERATOR(
             "ic2-macerator",
-            "ic2:standard-machine-no-upgrade-loop"
+            "ic2:macerator-no-upgrade-batch",
+            true
         ) {
             @Override
             TileEntity create(WorldServer world, BlockPos pos) throws Exception {
@@ -619,38 +799,20 @@ final class AdapterDifferentialVerifier {
             void runLegacy(TileEntity tile, int ticks) throws Exception {
                 runIc2Legacy(tile, ticks);
             }
-        },
-        IC2_COMPRESSOR(
-            "ic2-compressor",
-            "ic2:standard-machine-no-upgrade-loop"
-        ) {
-            @Override
-            TileEntity create(WorldServer world, BlockPos pos) throws Exception {
-                return placeIc2(world, pos, "compressor");
-            }
-
-            @Override
-            void initialize(TileEntity tile) throws Exception {
-                initializeIc2(tile, new ItemStack(Items.SNOWBALL, 64));
-            }
-
-            @Override
-            String snapshot(TileEntity tile) throws Exception {
-                return snapshotIc2(tile);
-            }
-
-            @Override
-            void runLegacy(TileEntity tile, int ticks) throws Exception {
-                runIc2Legacy(tile, ticks);
-            }
         };
 
         private final String id;
         private final String adapterId;
+        private final boolean refreshRouteEachDispatch;
 
-        MachineKind(String id, String adapterId) {
+        MachineKind(
+            String id,
+            String adapterId,
+            boolean refreshRouteEachDispatch
+        ) {
             this.id = id;
             this.adapterId = adapterId;
+            this.refreshRouteEachDispatch = refreshRouteEachDispatch;
         }
 
         abstract TileEntity create(WorldServer world, BlockPos pos)
@@ -665,22 +827,336 @@ final class AdapterDifferentialVerifier {
         }
     }
 
+    private static final class DispatchBridge {
+        private static volatile DispatchBridge instance;
+
+        private final Object registry;
+        private final Class<?> contextClass;
+        private final Method dispatch;
+        private final Method prepare;
+        private final Method dispatchPrepared;
+        private Method adapterId;
+        private Method result;
+        private Method consumed;
+        private Method fallback;
+        private Method invalidated;
+        private Method syncRequired;
+
+        private DispatchBridge() throws Exception {
+            ClassLoader loader =
+                AdapterDifferentialVerifier.class.getClassLoader();
+            Class<?> registryClass = loader.loadClass(
+                "com.sci.torcherino.acceleration.AdapterRegistry"
+            );
+            contextClass = loader.loadClass(
+                "com.sci.torcherino.api.AccelerationContext"
+            );
+            Class<?> routeClass = loader.loadClass(
+                "com.sci.torcherino.acceleration."
+                    + "AdapterRegistry$PreparedRoute"
+            );
+            registry = registryClass.getMethod("getInstance").invoke(null);
+            dispatch = registryClass.getDeclaredMethod(
+                "dispatch",
+                TileEntity.class,
+                int.class,
+                contextClass
+            );
+            prepare = registryClass.getDeclaredMethod(
+                "prepare",
+                TileEntity.class,
+                routeClass
+            );
+            dispatchPrepared = registryClass.getDeclaredMethod(
+                "dispatchPrepared",
+                TileEntity.class,
+                int.class,
+                contextClass,
+                routeClass
+            );
+            dispatch.setAccessible(true);
+            prepare.setAccessible(true);
+            dispatchPrepared.setAccessible(true);
+        }
+
+        private static DispatchBridge get() throws Exception {
+            DispatchBridge current = instance;
+            if (current != null) {
+                return current;
+            }
+            synchronized (DispatchBridge.class) {
+                if (instance == null) {
+                    instance = new DispatchBridge();
+                }
+                return instance;
+            }
+        }
+
+        private DispatchResult dispatch(TileEntity tile, int ticks)
+            throws Exception {
+            Object raw = dispatch.invoke(
+                registry,
+                tile,
+                ticks,
+                context(tile)
+            );
+            return parse(raw);
+        }
+
+        private PreparedDispatch prepare(
+            TileEntity tile,
+            boolean refreshRouteEachDispatch
+        ) throws Exception {
+            return new PreparedDispatch(
+                this,
+                context(tile),
+                prepareRoute(tile, null),
+                refreshRouteEachDispatch
+            );
+        }
+
+        private Object context(TileEntity tile) throws Exception {
+            return contextClass
+                .getConstructor(WorldServer.class, BlockPos.class)
+                .newInstance(tile.getWorld(), tile.getPos());
+        }
+
+        private Object prepareRoute(TileEntity tile, Object previous)
+            throws Exception {
+            return prepare.invoke(registry, tile, previous);
+        }
+
+        private Object dispatchPrepared(
+            TileEntity tile,
+            int ticks,
+            Object context,
+            Object route
+        ) throws Exception {
+            return dispatchPrepared.invoke(
+                registry,
+                tile,
+                ticks,
+                context,
+                route
+            );
+        }
+
+        private DispatchResult parse(Object raw) throws Exception {
+            bindResultAccess(raw);
+            Object advance = result.invoke(raw);
+            return new DispatchResult(
+                String.valueOf(adapterId.invoke(raw)),
+                ((Number) consumed.invoke(advance)).intValue(),
+                ((Number) fallback.invoke(advance)).intValue(),
+                (Boolean) invalidated.invoke(advance),
+                (Boolean) syncRequired.invoke(advance)
+            );
+        }
+
+        private void bindResultAccess(Object raw) throws Exception {
+            if (adapterId != null) {
+                return;
+            }
+            synchronized (this) {
+                if (adapterId != null) {
+                    return;
+                }
+                adapterId = raw.getClass().getDeclaredMethod("getAdapterId");
+                result = raw.getClass().getDeclaredMethod("getResult");
+                adapterId.setAccessible(true);
+                result.setAccessible(true);
+                Object advance = result.invoke(raw);
+                consumed = advance.getClass().getMethod("getConsumedTicks");
+                fallback = advance.getClass().getMethod("getFallbackTicks");
+                invalidated = advance.getClass().getMethod("isInvalidated");
+                syncRequired = advance.getClass().getMethod("isSyncRequired");
+            }
+        }
+    }
+
+    private static final class PreparedDispatch {
+        private final DispatchBridge bridge;
+        private final Object context;
+        private final boolean refreshRouteEachDispatch;
+        private Object route;
+
+        private PreparedDispatch(
+            DispatchBridge bridge,
+            Object context,
+            Object route,
+            boolean refreshRouteEachDispatch
+        ) {
+            this.bridge = bridge;
+            this.context = context;
+            this.route = route;
+            this.refreshRouteEachDispatch = refreshRouteEachDispatch;
+        }
+
+        private long timeAdvance(TileEntity tile, int ticks)
+            throws Exception {
+            long start = System.nanoTime();
+            if (refreshRouteEachDispatch) {
+                route = bridge.prepareRoute(tile, route);
+            }
+            Object raw = bridge.dispatchPrepared(
+                tile,
+                ticks,
+                context,
+                route
+            );
+            long elapsed = System.nanoTime() - start;
+            DispatchResult parsed = bridge.parse(raw);
+            if (parsed.consumedTicks != ticks
+                || parsed.fallbackTicks != 0
+                || parsed.invalidated) {
+                throw new IllegalStateException(
+                    "route=" + parsed.adapterId
+                        + " advance=" + parsed.consumedTicks
+                        + "/" + parsed.fallbackTicks
+                        + " invalidated=" + parsed.invalidated
+                );
+            }
+            if (parsed.syncRequired) {
+                long syncStart = System.nanoTime();
+                tile.markDirty();
+                elapsed += System.nanoTime() - syncStart;
+            }
+            return elapsed;
+        }
+    }
+
     private static final class DispatchResult {
         private final String adapterId;
         private final int consumedTicks;
         private final int fallbackTicks;
         private final boolean invalidated;
+        private final boolean syncRequired;
 
         private DispatchResult(
             String adapterId,
             int consumedTicks,
             int fallbackTicks,
-            boolean invalidated
+            boolean invalidated,
+            boolean syncRequired
         ) {
             this.adapterId = adapterId;
             this.consumedTicks = consumedTicks;
             this.fallbackTicks = fallbackTicks;
             this.invalidated = invalidated;
+            this.syncRequired = syncRequired;
+        }
+    }
+
+    private static final class PerformanceSample {
+        private final long legacyNanos;
+        private final long adapterNanos;
+
+        private PerformanceSample(long legacyNanos, long adapterNanos) {
+            this.legacyNanos = legacyNanos;
+            this.adapterNanos = adapterNanos;
+        }
+    }
+
+    private static final class PerformanceResult {
+        private final boolean success;
+        private final String id;
+        private final int ticks;
+        private final int repetitions;
+        private final long legacyP50;
+        private final long legacyP95;
+        private final long adapterP50;
+        private final long adapterP95;
+        private final String detail;
+
+        private PerformanceResult(
+            boolean success,
+            String id,
+            int ticks,
+            int repetitions,
+            long legacyP50,
+            long legacyP95,
+            long adapterP50,
+            long adapterP95,
+            String detail
+        ) {
+            this.success = success;
+            this.id = id;
+            this.ticks = ticks;
+            this.repetitions = repetitions;
+            this.legacyP50 = legacyP50;
+            this.legacyP95 = legacyP95;
+            this.adapterP50 = adapterP50;
+            this.adapterP95 = adapterP95;
+            this.detail = detail;
+        }
+
+        private static PerformanceResult success(
+            String id,
+            int ticks,
+            int repetitions,
+            long legacyP50,
+            long legacyP95,
+            long adapterP50,
+            long adapterP95
+        ) {
+            return new PerformanceResult(
+                true,
+                id,
+                ticks,
+                repetitions,
+                legacyP50,
+                legacyP95,
+                adapterP50,
+                adapterP95,
+                null
+            );
+        }
+
+        private static PerformanceResult failure(
+            String id,
+            int ticks,
+            String detail
+        ) {
+            return new PerformanceResult(
+                false,
+                id,
+                ticks,
+                0,
+                0L,
+                0L,
+                0L,
+                0L,
+                detail
+            );
+        }
+
+        private String describe() {
+            if (!success) {
+                return "FAIL PERF " + id + " x" + ticks + " " + detail;
+            }
+            double speedup = adapterP50 <= 0L
+                ? 0.0D
+                : legacyP50 / (double) adapterP50;
+            double reduction = legacyP50 <= 0L
+                ? 0.0D
+                : (legacyP50 - adapterP50) * 100.0D / legacyP50;
+            return String.format(
+                Locale.ROOT,
+                "PERF %s x%d reps=%d legacy=%.3f/%.3f us "
+                    + "adapter=%.3f/%.3f us speedup=%.2fx "
+                    + "reduction=%.1f%% perVirtual=%.1f/%.1f ns",
+                id,
+                ticks,
+                repetitions,
+                legacyP50 / 1000.0D,
+                legacyP95 / 1000.0D,
+                adapterP50 / 1000.0D,
+                adapterP95 / 1000.0D,
+                speedup,
+                reduction,
+                legacyP50 / (double) ticks,
+                adapterP50 / (double) ticks
+            );
         }
     }
 

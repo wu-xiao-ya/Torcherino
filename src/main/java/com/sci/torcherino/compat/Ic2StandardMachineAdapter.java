@@ -26,13 +26,18 @@ final class Ic2StandardMachineAdapter
         "ic2.core.block.machine.tileentity.TileEntityElectricMachine";
     private static final String ELECTRIC_MACHINE_SIGNATURE =
         "c3c2cd1a3f3b08ded7c3744666c06857f600b2c0f312124e3bc673b02f6b9722";
+    private static final String MACERATOR_CLASS =
+        "ic2.core.block.machine.tileentity.TileEntityMacerator";
+    private static final String MACERATOR_SIGNATURE =
+        "4c293c42dc084e49347ef4c8e7679661f8e77786ea290775f4534578a38cf334";
 
     private Class<?> standardMachineClass;
+    private Class<?> maceratorClass;
     private Access access;
 
     @Override
     public String getId() {
-        return "ic2:standard-machine-no-upgrade-loop";
+        return "ic2:macerator-no-upgrade-batch";
     }
 
     @Override
@@ -42,7 +47,7 @@ final class Ic2StandardMachineAdapter
 
     @Override
     public AdapterClassification getClassification() {
-        return AdapterClassification.EXACT_FAST_LOOP;
+        return AdapterClassification.EXACT_BATCH;
     }
 
     @Override
@@ -61,6 +66,8 @@ final class Ic2StandardMachineAdapter
             StructuralSignature.digestForClass(STANDARD_MACHINE_CLASS)
         ) || !ELECTRIC_MACHINE_SIGNATURE.equals(
             StructuralSignature.digestForClass(ELECTRIC_MACHINE_CLASS)
+        ) || !MACERATOR_SIGNATURE.equals(
+            StructuralSignature.digestForClass(MACERATOR_CLASS)
         )) {
             return AdapterProbe.unavailable(
                 "signature-mismatch: IC2 standard machine layout changed"
@@ -69,6 +76,7 @@ final class Ic2StandardMachineAdapter
         try {
             ClassLoader loader = getClass().getClassLoader();
             standardMachineClass = loader.loadClass(STANDARD_MACHINE_CLASS);
+            maceratorClass = loader.loadClass(MACERATOR_CLASS);
             access = Access.bind(
                 standardMachineClass,
                 NetworkEmitter.bind(loader)
@@ -76,20 +84,20 @@ final class Ic2StandardMachineAdapter
             return AdapterProbe.available(
                 "ic2@" + SUPPORTED_VERSION
                     + "/standard#" + STANDARD_MACHINE_SIGNATURE.substring(0, 12)
-                    + "/electric#" + ELECTRIC_MACHINE_SIGNATURE.substring(0, 12),
-                "standard-machine processing loop with no upgrade items; "
-                    + "discharge and upgrade slots remain real-tick only"
+                    + "/electric#" + ELECTRIC_MACHINE_SIGNATURE.substring(0, 12)
+                    + "/macerator#" + MACERATOR_SIGNATURE.substring(0, 12),
+                "boundary batch for Macerator with no upgrade items; "
+                    + "discharge, components, and "
+                    + "upgrade slots remain real-tick only"
             );
         } catch (ReflectiveOperationException e) {
-            standardMachineClass = null;
-            access = null;
+            clearAccess();
             return AdapterProbe.unavailable(
                 "signature-mismatch: IC2 standard-machine access "
                     + e.getClass().getSimpleName()
             );
         } catch (SecurityException e) {
-            standardMachineClass = null;
-            access = null;
+            clearAccess();
             return AdapterProbe.unavailable(
                 "IC2 standard-machine access denied"
             );
@@ -104,7 +112,10 @@ final class Ic2StandardMachineAdapter
             return false;
         }
         try {
-            return access.hasNoUpgrades(tile);
+            if (!access.hasNoUpgrades(tile)) {
+                return false;
+            }
+            return tile.getClass() == maceratorClass;
         } catch (Throwable ignored) {
             return false;
         }
@@ -125,6 +136,12 @@ final class Ic2StandardMachineAdapter
             return AdvanceResult.fallback(ticks);
         }
         return advanceWithAccess(tile, ticks, access);
+    }
+
+    private void clearAccess() {
+        standardMachineClass = null;
+        maceratorClass = null;
+        access = null;
     }
 
     static AdvanceResult advanceWithAccess(
@@ -198,6 +215,7 @@ final class Ic2StandardMachineAdapter
         private final MethodHandle upgradeSlotEmpty;
         private final MethodHandle getOutput;
         private final MethodHandle operate;
+        private final MethodHandle getEnergy;
         private final MethodHandle useEnergy;
         private final MethodHandle setActive;
         private final MethodHandle getActive;
@@ -214,6 +232,7 @@ final class Ic2StandardMachineAdapter
             MethodHandle upgradeSlotEmpty,
             MethodHandle getOutput,
             MethodHandle operate,
+            MethodHandle getEnergy,
             MethodHandle useEnergy,
             MethodHandle setActive,
             MethodHandle getActive,
@@ -229,6 +248,7 @@ final class Ic2StandardMachineAdapter
             this.upgradeSlotEmpty = upgradeSlotEmpty;
             this.getOutput = getOutput;
             this.operate = operate;
+            this.getEnergy = getEnergy;
             this.useEnergy = useEnergy;
             this.setActive = setActive;
             this.getActive = getActive;
@@ -246,6 +266,7 @@ final class Ic2StandardMachineAdapter
             Method empty = findMethod(upgradeSlot.getType(), "isEmpty", 0);
             Method output = findMethod(ownerClass, "getOutput", 0);
             Method operate = findMethod(ownerClass, "operate", 1);
+            Method getEnergy = findMethod(ownerClass, "getEnergy", 0);
             Method useEnergy = findMethod(ownerClass, "useEnergy", 1);
             Method setActive = findMethod(ownerClass, "setActive", 1);
             Method getActive = findMethod(ownerClass, "getActive", 0);
@@ -260,6 +281,7 @@ final class Ic2StandardMachineAdapter
                 lookup.unreflect(empty),
                 lookup.unreflect(output),
                 lookup.unreflect(operate),
+                lookup.unreflect(getEnergy),
                 lookup.unreflect(useEnergy),
                 lookup.unreflect(setActive),
                 lookup.unreflect(getActive),
@@ -287,25 +309,60 @@ final class Ic2StandardMachineAdapter
                 int progress = (short) progressGetter.invoke(tile);
                 int energyConsume = (int) energyConsumeGetter.invoke(tile);
                 int operationLength = (int) operationLengthGetter.invoke(tile);
+                if (operationLength <= 0 || energyConsume < 0) {
+                    return AdvanceResult.fallback(ticks);
+                }
 
-                for (; consumed < ticks; consumed++) {
+                while (consumed < ticks) {
                     if (tile.isInvalid()) {
                         progressSetter.invoke(tile, (short) progress);
                         updateGuiProgress(tile, progress, operationLength);
                         return AdvanceResult.invalidated(consumed);
                     }
                     Object output = getOutput.invoke(tile);
-                    boolean powered = output != null
-                        && (boolean) useEnergy.invoke(
-                            tile,
-                            (double) energyConsume
+                    int remaining = ticks - consumed;
+                    int affordable = energyConsume <= 0
+                        ? remaining
+                        : (int) Math.min(
+                            Integer.MAX_VALUE,
+                            Math.floor(
+                                ((double) getEnergy.invoke(tile))
+                                    / energyConsume
+                            )
                         );
-                    if (powered) {
+                    if (output != null && affordable > 0) {
+                        int boundary = operationLength - progress;
+                        if (boundary <= 0) {
+                            boundary = 1;
+                        }
+                        int step = Math.min(
+                            remaining,
+                            Math.min(affordable, boundary)
+                        );
+                        boolean powered = (boolean) useEnergy.invoke(
+                            tile,
+                            (double) step * energyConsume
+                        );
+                        if (!powered) {
+                            progressSetter.invoke(tile, (short) progress);
+                            updateGuiProgress(
+                                tile,
+                                progress,
+                                operationLength
+                            );
+                            return new AdvanceResult(
+                                consumed,
+                                ticks - consumed,
+                                false,
+                                changed
+                            );
+                        }
                         setActive.invoke(tile, true);
                         if (progress == 0) {
                             eventEmitter.emit(tile, 0);
                         }
-                        progress++;
+                        progress += step;
+                        consumed += step;
                         changed = true;
                         progressSetter.invoke(tile, (short) progress);
                         if (progress >= operationLength) {
@@ -324,6 +381,7 @@ final class Ic2StandardMachineAdapter
                             changed = true;
                         }
                         setActive.invoke(tile, false);
+                        consumed = ticks;
                     }
                 }
 

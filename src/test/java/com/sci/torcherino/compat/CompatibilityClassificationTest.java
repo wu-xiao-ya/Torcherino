@@ -28,11 +28,11 @@ final class CompatibilityClassificationTest {
     }
 
     @Test
-    void ic2NoUpgradeProcessingUsesExactFastLoop() {
+    void ic2AuditedProcessingUsesExactBatch() {
         Ic2StandardMachineAdapter adapter = new Ic2StandardMachineAdapter();
 
         assertEquals(
-            AdapterClassification.EXACT_FAST_LOOP,
+            AdapterClassification.EXACT_BATCH,
             adapter.getClassification()
         );
     }

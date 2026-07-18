@@ -28,7 +28,7 @@ public final class BenchmarkCommand extends CommandBase {
     public String getUsage(ICommandSender sender) {
         return "/torcherino-bench <run furnace-suite "
             + "[all|vanilla|thermal1|thermal|thermal80|enderio] [diagnostic|timing]"
-            + "|verify adapters|status|export [path]>";
+            + "|verify adapters|measure adapters|status|export [path]>";
     }
 
     @Override
@@ -59,6 +59,10 @@ public final class BenchmarkCommand extends CommandBase {
             verify(server, sender, args);
             return;
         }
+        if ("measure".equalsIgnoreCase(args[0])) {
+            measure(server, sender, args);
+            return;
+        }
 
         throw new CommandException(getUsage(sender));
     }
@@ -75,11 +79,15 @@ public final class BenchmarkCommand extends CommandBase {
                 args,
                 "run",
                 "verify",
+                "measure",
                 "status",
                 "export"
             );
         }
         if (args.length == 2 && "verify".equalsIgnoreCase(args[0])) {
+            return getListOfStringsMatchingLastWord(args, "adapters");
+        }
+        if (args.length == 2 && "measure".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "adapters");
         }
         if (args.length == 2 && "run".equalsIgnoreCase(args[0])) {
@@ -144,6 +152,19 @@ public final class BenchmarkCommand extends CommandBase {
             throw new CommandException("/torcherino-bench verify adapters");
         }
         for (String line : AdapterDifferentialVerifier.verify(server)) {
+            send(sender, line);
+        }
+    }
+
+    private void measure(
+        MinecraftServer server,
+        ICommandSender sender,
+        String[] args
+    ) throws CommandException {
+        if (args.length != 2 || !"adapters".equalsIgnoreCase(args[1])) {
+            throw new CommandException("/torcherino-bench measure adapters");
+        }
+        for (String line : AdapterDifferentialVerifier.benchmark(server)) {
             send(sender, line);
         }
     }

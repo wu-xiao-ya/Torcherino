@@ -15,11 +15,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class Ic2StandardMachineAdapterTest {
     @Test
-    void noUpgradeStandardMachinesUseExactFastLoop() {
+    void auditedNoUpgradeMachinesUseExactBatch() {
         Ic2StandardMachineAdapter adapter = new Ic2StandardMachineAdapter();
 
         assertEquals(
-            AdapterClassification.EXACT_FAST_LOOP,
+            AdapterClassification.EXACT_BATCH,
             adapter.getClassification()
         );
     }
@@ -94,6 +94,34 @@ final class Ic2StandardMachineAdapterTest {
         assertEquals(2, tile.input);
     }
 
+    @Test
+    void insufficientEnergyBatchesTheRemainingIdleTicks() throws Exception {
+        Ic2StandardMachineAdapter.Access access =
+            Ic2StandardMachineAdapter.Access.bind(
+                FakeStandardMachine.class,
+                new Ic2StandardMachineAdapter.EventEmitter() {
+                    @Override
+                    public void emit(TileEntity tile, int event) {
+                    }
+                }
+            );
+        FakeStandardSubclass tile = new FakeStandardSubclass();
+        tile.energy = 25.0D;
+
+        AdvanceResult result = Ic2StandardMachineAdapter.advanceWithAccess(
+            tile,
+            4,
+            access
+        );
+
+        assertEquals(4, result.getConsumedTicks());
+        assertEquals(0, result.getFallbackTicks());
+        assertEquals(5.0D, tile.energy);
+        assertEquals(2, tile.progress);
+        assertEquals(2, tile.input);
+        assertEquals(0, tile.output);
+    }
+
     static class FakeStandardMachine extends TileEntity {
         protected short progress;
         public int energyConsume = 10;
@@ -123,6 +151,10 @@ final class Ic2StandardMachineAdapterTest {
             }
             energy -= amount;
             return true;
+        }
+
+        public double getEnergy() {
+            return energy;
         }
 
         public void setActive(boolean value) {
