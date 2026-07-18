@@ -221,7 +221,7 @@ public class Torcherino {
             discoverySlices = config.getInt(
                 "discoverySlices",
                 "acceleration",
-                4,
+                1,
                 1,
                 1200,
                 "Number of evenly spaced scan slices per discovery cycle. Values above the interval are clamped to the interval."
