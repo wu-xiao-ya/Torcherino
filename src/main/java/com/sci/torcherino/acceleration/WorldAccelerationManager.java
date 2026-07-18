@@ -102,9 +102,16 @@ public final class WorldAccelerationManager {
             boolean profiling = profiler.isEnabled();
             discoveryWheel.advance(
                 traversalTargets.length,
-                Torcherino.discoveryIntervalTicks
+                Torcherino.discoveryIntervalTicks,
+                Torcherino.discoverySlices
             );
-            discoverTargets(profiler, profiling);
+            if (discoveryWheel.hasScheduledBatch()) {
+                discoverTargets(profiler, profiling);
+                discoveryBatches++;
+            }
+            if (discoveryWheel.completedCycle()) {
+                discoveryScans++;
+            }
             executeDiscoveredTargets(profiler, profiling);
         } finally {
             ticking = false;
@@ -157,7 +164,11 @@ public final class WorldAccelerationManager {
     }
 
     public int getDiscoveryCursor() {
-        return discoveryWheel.getCursor(traversalTargets.length);
+        return discoveryWheel.getCursor();
+    }
+
+    public int getDiscoverySlices() {
+        return discoveryWheel.getSlices();
     }
 
     void close() {
@@ -197,10 +208,6 @@ public final class WorldAccelerationManager {
             } else {
                 removeDiscoveredTarget(context);
             }
-        }
-        discoveryBatches++;
-        if (discoveryWheel.completedCycle()) {
-            discoveryScans++;
         }
     }
 

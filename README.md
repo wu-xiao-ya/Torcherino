@@ -16,12 +16,13 @@ with one acceleration manager per server world.
 - Unloaded chunks are skipped and are never loaded by acceleration.
 - Unknown machines execute their original `ITickable.update()` once per
   requested virtual tick.
-- Covered-position discovery is spread evenly across 20 server ticks by
-  default. A maximum-range torch scans about 12 or 13 of its 243 positions per
-  tick instead of scanning all positions at once. Already discovered machines
-  and random-tick blocks are still validated and accelerated every tick, so
-  removal, invalidation, replacement, and chunk unload stop the cached target
-  immediately. Newly placed targets can wait up to one discovery cycle.
+- Covered-position discovery uses four evenly spaced slices across a 20-tick
+  cycle by default. A maximum-range torch scans about 60 or 61 of its 243
+  positions every five ticks instead of scanning all positions at once.
+  Already discovered machines and random-tick blocks are still validated and
+  accelerated every tick, so removal, invalidation, replacement, and chunk
+  unload stop the cached target immediately. Newly placed targets can wait up
+  to one discovery cycle.
 
 ## Exact adapters
 
@@ -61,8 +62,10 @@ neighboring inventories once per invocation.
 Configuration remains at `config/sci4me/Torcherino.cfg`. New defaults are
 `strictExecution=true`, `overlapMode=LEGACY_SUM`, `asyncPlanner=true`,
 `adapterMode=EXACT_ONLY`, `loadChunks=false`, and
-`discoveryIntervalTicks=20`. Set `discoveryIntervalTicks=1` to scan every
-covered position on every server tick; valid values are `1..1200`.
+`discoveryIntervalTicks=20`, `discoverySlices=4`. Set
+`discoveryIntervalTicks=1` to scan every covered position on every server
+tick. Set `discoverySlices=20` with the default interval to scan one twentieth
+of the coverage every tick; valid values are `1..1200`.
 
 The strict, overlap, adapter, and chunk-loading semantics are fixed by this
 branch. Diagnostic thresholds remain configurable.

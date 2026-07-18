@@ -61,6 +61,7 @@ public final class AccelerationService {
                     + " discoveryIn=" + manager.getTicksUntilDiscovery()
                     + " discoveryCursor=" + manager.getDiscoveryCursor()
                     + "/" + manager.getCoveredPositionCount()
+                    + " discoverySlices=" + manager.getDiscoverySlices()
                     + " discoveryBatches=" + manager.getDiscoveryBatches()
                     + " discoveryScans=" + manager.getDiscoveryScans()
                     + " revision=" + manager.getRevision()

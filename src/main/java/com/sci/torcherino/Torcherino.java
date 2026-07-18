@@ -53,6 +53,7 @@ public class Torcherino {
     public static boolean asyncPlanner;
     public static boolean loadChunks;
     public static int discoveryIntervalTicks;
+    public static int discoverySlices;
     public static String overlapMode;
     public static String adapterMode;
     public static int slowTargetMillis;
@@ -216,6 +217,14 @@ public class Torcherino {
                 1,
                 1200,
                 "Ticks used to complete one incremental covered-position discovery cycle. Cached targets are still validated and accelerated every tick."
+            );
+            discoverySlices = config.getInt(
+                "discoverySlices",
+                "acceleration",
+                4,
+                1,
+                1200,
+                "Number of evenly spaced scan slices per discovery cycle. Values above the interval are clamped to the interval."
             );
             slowTargetMillis = config.getInt(
                 "slowTargetMillis",
