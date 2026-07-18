@@ -98,11 +98,14 @@ public final class WorldAccelerationManager {
         long managerStart = System.nanoTime();
         ticking = true;
         try {
-            discoverTargets(discoveryWheel.nextBatch(
+            AccelerationProfiler profiler = AccelerationProfiler.getInstance();
+            boolean profiling = profiler.isEnabled();
+            discoveryWheel.advance(
                 traversalTargets.length,
                 Torcherino.discoveryIntervalTicks
-            ));
-            executeDiscoveredTargets();
+            );
+            discoverTargets(profiler, profiling);
+            executeDiscoveredTargets(profiler, profiling);
         } finally {
             ticking = false;
             while (!deferredChanges.isEmpty()) {
@@ -172,13 +175,14 @@ public final class WorldAccelerationManager {
         discoveredTargetCount = 0;
     }
 
-    private void discoverTargets(DiscoveryWheel.Batch batch) {
+    private void discoverTargets(
+        AccelerationProfiler profiler,
+        boolean profiling
+    ) {
         TargetExecutionContext[] coverageTargets = traversalTargets;
         int[] coverageMultipliers = traversalMultipliers;
-        AccelerationProfiler profiler = AccelerationProfiler.getInstance();
-        boolean profiling = profiler.isEnabled();
-        int end = Math.min(batch.getEnd(), coverageTargets.length);
-        for (int i = batch.getStart(); i < end; i++) {
+        int end = discoveryWheel.getBatchEnd();
+        for (int i = discoveryWheel.getBatchStart(); i < end; i++) {
             TargetExecutionContext context = coverageTargets[i];
             int multiplier = coverageMultipliers[i];
             long scanStart = profiling ? System.nanoTime() : 0L;
@@ -195,7 +199,7 @@ public final class WorldAccelerationManager {
             }
         }
         discoveryBatches++;
-        if (batch.completedCycle()) {
+        if (discoveryWheel.completedCycle()) {
             discoveryScans++;
         }
     }
@@ -258,12 +262,15 @@ public final class WorldAccelerationManager {
         );
     }
 
-    private void executeDiscoveredTargets() {
+    private void executeDiscoveredTargets(
+        AccelerationProfiler profiler,
+        boolean profiling
+    ) {
         int index = 0;
         while (index < discoveredTargetCount) {
             TargetExecutionContext context = discoveredTargets[index];
             int multiplier = discoveredMultipliers[index];
-            if (tickTarget(context, multiplier)) {
+            if (tickTarget(context, multiplier, profiler, profiling)) {
                 index++;
             } else {
                 removeDiscoveredTargetAt(index);
@@ -343,12 +350,12 @@ public final class WorldAccelerationManager {
 
     private boolean tickTarget(
         TargetExecutionContext cachedContext,
-        int multiplier
+        int multiplier,
+        AccelerationProfiler profiler,
+        boolean profiling
     ) {
         long packedPos = cachedContext.packedPos;
         BlockPos pos = cachedContext.pos;
-        AccelerationProfiler profiler = AccelerationProfiler.getInstance();
-        boolean profiling = profiler.isEnabled();
         long scanStart = profiling ? System.nanoTime() : 0L;
         if (!world.isBlockLoaded(pos, false)) {
             cachedContext.clearRoute();

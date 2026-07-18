@@ -3,9 +3,12 @@ package com.sci.torcherino.acceleration;
 final class DiscoveryWheel {
     private int interval = 1;
     private int phase;
+    private int batchStart;
+    private int batchEnd;
+    private boolean completedCycle;
     private boolean forced = true;
 
-    Batch nextBatch(int targetCount, int intervalTicks) {
+    void advance(int targetCount, int intervalTicks) {
         int normalizedInterval = Math.max(1, intervalTicks);
         int normalizedTargetCount = Math.max(0, targetCount);
         if (forced || interval != normalizedInterval) {
@@ -14,12 +17,11 @@ final class DiscoveryWheel {
             forced = false;
         }
 
-        int start = partition(normalizedTargetCount, phase, interval);
+        batchStart = partition(normalizedTargetCount, phase, interval);
         int nextPhase = phase + 1;
-        int end = partition(normalizedTargetCount, nextPhase, interval);
-        boolean completedCycle = nextPhase >= interval;
+        batchEnd = partition(normalizedTargetCount, nextPhase, interval);
+        completedCycle = nextPhase >= interval;
         phase = completedCycle ? 0 : nextPhase;
-        return new Batch(start, end, completedCycle);
     }
 
     void force() {
@@ -41,35 +43,23 @@ final class DiscoveryWheel {
         return partition(Math.max(0, targetCount), phase, interval);
     }
 
-    private static int partition(int targetCount, int phase, int interval) {
-        return (int) ((long) targetCount * phase / interval);
+    int getBatchStart() {
+        return batchStart;
     }
 
-    static final class Batch {
-        private final int start;
-        private final int end;
-        private final boolean completedCycle;
+    int getBatchEnd() {
+        return batchEnd;
+    }
 
-        private Batch(int start, int end, boolean completedCycle) {
-            this.start = start;
-            this.end = end;
-            this.completedCycle = completedCycle;
-        }
+    int getBatchSize() {
+        return batchEnd - batchStart;
+    }
 
-        int getStart() {
-            return start;
-        }
+    boolean completedCycle() {
+        return completedCycle;
+    }
 
-        int getEnd() {
-            return end;
-        }
-
-        int size() {
-            return end - start;
-        }
-
-        boolean completedCycle() {
-            return completedCycle;
-        }
+    private static int partition(int targetCount, int phase, int interval) {
+        return (int) ((long) targetCount * phase / interval);
     }
 }
