@@ -450,3 +450,51 @@ replacement after scan:     targets=1 discoveryIn=7  discoveryScans=33
 This confirms that removal does not wait for the discovery interval. A newly
 placed machine in an empty covered position is intentionally admitted by the
 next discovery scan.
+
+### Incremental Discovery Wheel Follow-up
+
+The alpha.8 discovery wheel can divide one discovery cycle into configurable
+scan slices. CatRoom testing rejected four slices as the default. With
+`discoveryIntervalTicks=20` and `discoverySlices=4`, two adjacent runs per Jar
+showed server P50 regressions against alpha.7 of 26.1%, 6.7%, 5.8%, and 5.9%
+at multipliers 1, 4, 36, and 324. Median allocation did not improve. The
+configuration remains available for servers that explicitly prefer smaller,
+more frequent scan batches, but the shipped default is `discoverySlices=1`.
+
+The final fast path skips empty managers, avoids division in single-slice
+mode, and traverses stable discovered-target arrays through local references.
+The following results combine two adjacent alpha.7 runs and two adjacent
+alpha.8 runs, with 200 measured samples per multiplier:
+
+| Multiplier | alpha.7 server P50 ms | alpha.8 server P50 ms | P50 change | alpha.7 server P95 ms | alpha.8 server P95 ms | P95 change | Median server allocation change |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.7751 | 0.7457 | 3.8% lower | 1.2274 | 1.4672 | 19.5% higher | 3.3% lower |
+| 4 | 0.5592 | 0.5705 | 2.0% higher | 1.0065 | 1.0258 | 1.9% higher | 1.1% higher |
+| 36 | 0.5079 | 0.4741 | 6.7% lower | 0.7188 | 0.6442 | 10.4% lower | 0.5% higher |
+| 324 | 0.4944 | 0.4949 | 0.1% higher | 1.0439 | 0.8752 | 16.2% lower | 0.6% lower |
+
+All 800 alpha.8 samples restored their baseline. Inventory, energy, progress,
+and output produced no state signature that was absent from alpha.7. The
+single-slice design deliberately leaves one full discovery scan every 20
+ticks, so sparse P95 remains sensitive to whether that scan falls inside the
+sample window.
+
+The final removal probe used the official fast-path Jar:
+
+```text
+before removal:              targets=1 discoveryIn=19 discoverySlices=1
+next observed tick window:   targets=0 discoveryIn=15 discoverySlices=1
+replacement before scan:     targets=0 discoveryIn=11 discoverySlices=1
+replacement after scan:      targets=1 discoveryIn=6  discoverySlices=1
+empty dimension:             discoveryBatches=0 discoveryScans=0
+```
+
+Official artifacts from GitHub Actions run `29630624181`:
+
+```text
+1ECF7591EF7301A9DC24793817429ABCFA3907CA79ED648325E74ADA2FF609D5
+build/libs/torcherino-8.0.0-alpha.8.jar
+
+1E17D1F334A6B9614426FAF256532B80D5F602C351C36A21431477816DCBAE5C
+build/libs/torcherino-benchmark-harness-8.0.0-alpha.8.jar
+```
