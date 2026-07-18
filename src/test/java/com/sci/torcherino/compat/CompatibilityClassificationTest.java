@@ -17,22 +17,22 @@ final class CompatibilityClassificationTest {
     }
 
     @Test
-    void actuallyAdditionsAuditRemainsExactLegacyFallback() {
+    void actuallyAdditionsProcessingUsesExactBatch() {
         ActuallyAdditionsProcessingAuditAdapter adapter =
             new ActuallyAdditionsProcessingAuditAdapter();
 
         assertEquals(
-            AdapterClassification.LEGACY_FALLBACK,
+            AdapterClassification.EXACT_BATCH,
             adapter.getClassification()
         );
     }
 
     @Test
-    void ic2AuditRemainsLegacyFallbackUntilUpgradeTicksCanBeIsolated() {
+    void ic2NoUpgradeProcessingUsesExactFastLoop() {
         Ic2StandardMachineAdapter adapter = new Ic2StandardMachineAdapter();
 
         assertEquals(
-            AdapterClassification.LEGACY_FALLBACK,
+            AdapterClassification.EXACT_FAST_LOOP,
             adapter.getClassification()
         );
     }
