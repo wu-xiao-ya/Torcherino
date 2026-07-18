@@ -35,7 +35,7 @@ public final class WorldAccelerationManager {
         new Long2ObjectOpenHashMap<TargetExecutionContext>();
     private final ArrayDeque<Runnable> deferredChanges = new ArrayDeque<Runnable>();
     private final CoverageMailbox mailbox = new CoverageMailbox();
-    private final DiscoveryCadence discoveryCadence = new DiscoveryCadence();
+    private final DiscoveryWheel discoveryWheel = new DiscoveryWheel();
     private final Random random = new Random();
 
     private Long2IntOpenHashMap coverage = new Long2IntOpenHashMap();
@@ -45,8 +45,10 @@ public final class WorldAccelerationManager {
     private TargetExecutionContext[] discoveredTargets =
         new TargetExecutionContext[0];
     private int[] discoveredMultipliers = new int[0];
+    private int discoveredTargetCount;
     private long revision;
     private long appliedPlanRevision;
+    private long discoveryBatches;
     private long discoveryScans;
     private boolean ticking;
 
@@ -96,9 +98,10 @@ public final class WorldAccelerationManager {
         long managerStart = System.nanoTime();
         ticking = true;
         try {
-            if (discoveryCadence.beginTick(Torcherino.discoveryIntervalTicks)) {
-                discoverTargets();
-            }
+            discoverTargets(discoveryWheel.nextBatch(
+                traversalTargets.length,
+                Torcherino.discoveryIntervalTicks
+            ));
             executeDiscoveredTargets();
         } finally {
             ticking = false;
@@ -135,7 +138,11 @@ public final class WorldAccelerationManager {
     }
 
     public int getDiscoveredTargetCount() {
-        return discoveredTargets.length;
+        return discoveredTargetCount;
+    }
+
+    public long getDiscoveryBatches() {
+        return discoveryBatches;
     }
 
     public long getDiscoveryScans() {
@@ -143,7 +150,11 @@ public final class WorldAccelerationManager {
     }
 
     public int getTicksUntilDiscovery() {
-        return discoveryCadence.getTicksUntilDiscovery();
+        return discoveryWheel.getTicksUntilCycleComplete();
+    }
+
+    public int getDiscoveryCursor() {
+        return discoveryWheel.getCursor(traversalTargets.length);
     }
 
     void close() {
@@ -158,18 +169,16 @@ public final class WorldAccelerationManager {
         traversalMultipliers = new int[0];
         discoveredTargets = new TargetExecutionContext[0];
         discoveredMultipliers = new int[0];
+        discoveredTargetCount = 0;
     }
 
-    private void discoverTargets() {
+    private void discoverTargets(DiscoveryWheel.Batch batch) {
         TargetExecutionContext[] coverageTargets = traversalTargets;
         int[] coverageMultipliers = traversalMultipliers;
-        TargetExecutionContext[] foundTargets =
-            new TargetExecutionContext[coverageTargets.length];
-        int[] foundMultipliers = new int[coverageTargets.length];
-        int found = 0;
         AccelerationProfiler profiler = AccelerationProfiler.getInstance();
         boolean profiling = profiler.isEnabled();
-        for (int i = 0; i < coverageTargets.length; i++) {
+        int end = Math.min(batch.getEnd(), coverageTargets.length);
+        for (int i = batch.getStart(); i < end; i++) {
             TargetExecutionContext context = coverageTargets[i];
             int multiplier = coverageMultipliers[i];
             long scanStart = profiling ? System.nanoTime() : 0L;
@@ -180,20 +189,15 @@ public final class WorldAccelerationManager {
                 profiling,
                 scanStart
             )) {
-                foundTargets[found] = context;
-                foundMultipliers[found] = multiplier;
-                found++;
+                addOrUpdateDiscoveredTarget(context, multiplier);
             } else {
-                context.clearRoute();
+                removeDiscoveredTarget(context);
             }
         }
-        discoveredTargets = found == foundTargets.length
-            ? foundTargets
-            : java.util.Arrays.copyOf(foundTargets, found);
-        discoveredMultipliers = found == foundMultipliers.length
-            ? foundMultipliers
-            : java.util.Arrays.copyOf(foundMultipliers, found);
-        discoveryScans++;
+        discoveryBatches++;
+        if (batch.completedCycle()) {
+            discoveryScans++;
+        }
     }
 
     private boolean isDiscoverableTarget(
@@ -255,28 +259,85 @@ public final class WorldAccelerationManager {
     }
 
     private void executeDiscoveredTargets() {
-        TargetExecutionContext[] targets = discoveredTargets;
-        int[] multipliers = discoveredMultipliers;
-        int retained = 0;
-        boolean removed = false;
-        for (int i = 0; i < targets.length; i++) {
-            TargetExecutionContext context = targets[i];
-            int multiplier = multipliers[i];
+        int index = 0;
+        while (index < discoveredTargetCount) {
+            TargetExecutionContext context = discoveredTargets[index];
+            int multiplier = discoveredMultipliers[index];
             if (tickTarget(context, multiplier)) {
-                if (removed) {
-                    targets[retained] = context;
-                    multipliers[retained] = multiplier;
-                }
-                retained++;
+                index++;
             } else {
-                removed = true;
-                context.clearRoute();
+                removeDiscoveredTargetAt(index);
             }
         }
-        if (removed) {
-            discoveredTargets = java.util.Arrays.copyOf(targets, retained);
-            discoveredMultipliers =
-                java.util.Arrays.copyOf(multipliers, retained);
+    }
+
+    private void addOrUpdateDiscoveredTarget(
+        TargetExecutionContext context,
+        int multiplier
+    ) {
+        int index = context.discoveredIndex;
+        if (index >= 0
+            && index < discoveredTargetCount
+            && discoveredTargets[index] == context) {
+            discoveredMultipliers[index] = multiplier;
+            return;
+        }
+        ensureDiscoveredCapacity(discoveredTargetCount + 1);
+        context.discoveredIndex = discoveredTargetCount;
+        discoveredTargets[discoveredTargetCount] = context;
+        discoveredMultipliers[discoveredTargetCount] = multiplier;
+        discoveredTargetCount++;
+    }
+
+    private void removeDiscoveredTarget(TargetExecutionContext context) {
+        int index = context.discoveredIndex;
+        if (index >= 0
+            && index < discoveredTargetCount
+            && discoveredTargets[index] == context) {
+            removeDiscoveredTargetAt(index);
+        } else {
+            context.discoveredIndex = -1;
+            context.clearRoute();
+        }
+    }
+
+    private void removeDiscoveredTargetAt(int index) {
+        int lastIndex = --discoveredTargetCount;
+        TargetExecutionContext removed = discoveredTargets[index];
+        if (index != lastIndex) {
+            TargetExecutionContext moved = discoveredTargets[lastIndex];
+            discoveredTargets[index] = moved;
+            discoveredMultipliers[index] = discoveredMultipliers[lastIndex];
+            moved.discoveredIndex = index;
+        }
+        discoveredTargets[lastIndex] = null;
+        discoveredMultipliers[lastIndex] = 0;
+        removed.discoveredIndex = -1;
+        removed.clearRoute();
+    }
+
+    private void ensureDiscoveredCapacity(int required) {
+        if (required <= discoveredTargets.length) {
+            return;
+        }
+        int current = discoveredTargets.length;
+        int capacity = Math.max(required, Math.max(4, current + (current >> 1) + 1));
+        discoveredTargets = java.util.Arrays.copyOf(discoveredTargets, capacity);
+        discoveredMultipliers =
+            java.util.Arrays.copyOf(discoveredMultipliers, capacity);
+    }
+
+    private void reconcileDiscoveredTargets() {
+        int index = 0;
+        while (index < discoveredTargetCount) {
+            TargetExecutionContext context = discoveredTargets[index];
+            int multiplier = coverage.get(context.packedPos);
+            if (multiplier <= 0) {
+                removeDiscoveredTargetAt(index);
+            } else {
+                discoveredMultipliers[index] = multiplier;
+                index++;
+            }
         }
     }
 
@@ -572,7 +633,7 @@ public final class WorldAccelerationManager {
     private void changed() {
         revision++;
         rebuildTraversal();
-        discoveryCadence.force();
+        discoveryWheel.force();
         CoverageSnapshot snapshot = new CoverageSnapshot(
             managerId,
             world.provider.getDimension(),
@@ -606,7 +667,7 @@ public final class WorldAccelerationManager {
         plannedCoverage.defaultReturnValue(0);
         coverage = plannedCoverage;
         rebuildTraversal();
-        discoveryCadence.force();
+        discoveryWheel.force();
         appliedPlanRevision = plan.getRevision();
     }
 
@@ -638,6 +699,7 @@ public final class WorldAccelerationManager {
             multipliers = java.util.Arrays.copyOf(multipliers, index);
         }
 
+        reconcileDiscoveredTargets();
         LongIterator cachedPositions = targetContexts.keySet().iterator();
         while (cachedPositions.hasNext()) {
             if (!coverage.containsKey(cachedPositions.nextLong())) {
@@ -670,6 +732,7 @@ public final class WorldAccelerationManager {
         private boolean blockBlacklisted;
         private boolean randomTick;
         private boolean hasTileEntity;
+        private int discoveredIndex = -1;
         private TileEntity routeTile;
         private AdapterRegistry.PreparedRoute route;
 

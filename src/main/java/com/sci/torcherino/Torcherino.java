@@ -43,7 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class Torcherino {
     public static final String MOD_ID = "torcherino";
     public static final String MOD_NAME = "Torcherino";
-    public static final String VERSION = "8.0.0-alpha.7";
+    public static final String VERSION = "8.0.0-alpha.8";
 
     public static boolean logPlacement;
     public static boolean overPoweredRecipe;
@@ -215,7 +215,7 @@ public class Torcherino {
                 20,
                 1,
                 1200,
-                "Full covered-position discovery interval. Cached targets are still validated and accelerated every tick."
+                "Ticks used to complete one incremental covered-position discovery cycle. Cached targets are still validated and accelerated every tick."
             );
             slowTargetMillis = config.getInt(
                 "slowTargetMillis",

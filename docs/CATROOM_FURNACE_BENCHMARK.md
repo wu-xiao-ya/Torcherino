@@ -1,7 +1,7 @@
 # CatRoom Furnace Benchmark
 
 This benchmark compares Torcherino 7.6, the scheduler-only refactor baseline,
-and the current alpha.7 implementation on the CatRoom/Cleanroom server supplied
+and the current alpha.8 implementation on the CatRoom/Cleanroom server supplied
 for this project.
 
 ## Locked Environment
@@ -31,7 +31,7 @@ Build the production mod and the independent harness:
 ```
 
 The harness is emitted as
-`build/libs/torcherino-benchmark-harness-8.0.0-alpha.7.jar`. It is not included
+`build/libs/torcherino-benchmark-harness-8.0.0-alpha.8.jar`. It is not included
 in the Torcherino release Jar.
 
 ## Candidate Baseline
@@ -110,7 +110,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ```
 
 The runner defaults to the project CatRoom core, Torcherino 7.6 and target-mod
-Jars in the Starlight Tech instance, and the current alpha.7/Harness artifacts.
+Jars in the Starlight Tech instance, and the current alpha.8/Harness artifacts.
 Each candidate is started separately for the `vanilla`, `thermal`, and
 `enderio` layers, so an optional-mod startup failure cannot invalidate another
 layer. Use `-BenchmarkLayers vanilla`, for example, to select a subset. All
