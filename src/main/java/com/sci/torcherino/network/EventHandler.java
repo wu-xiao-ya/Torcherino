@@ -3,6 +3,7 @@ package com.sci.torcherino.network;
 import com.sci.torcherino.Torcherino;
 import com.sci.torcherino.acceleration.AccelerationService;
 import com.sci.torcherino.blocks.tiles.TileTorcherino;
+import com.sci.torcherino.diagnostics.TorcherinoDiagnostics;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.EnumHand;
@@ -21,6 +22,14 @@ public class EventHandler {
             && event.phase == TickEvent.Phase.END
             && event.world instanceof net.minecraft.world.WorldServer) {
             AccelerationService.tick((net.minecraft.world.WorldServer) event.world);
+        }
+    }
+
+    @SubscribeEvent
+    public void serverTick(TickEvent.ServerTickEvent event) {
+        if (event.side == Side.SERVER
+            && event.phase == TickEvent.Phase.END) {
+            TorcherinoDiagnostics.onServerTick();
         }
     }
 

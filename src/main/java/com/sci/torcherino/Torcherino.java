@@ -8,6 +8,7 @@ import com.sci.torcherino.blocks.tiles.TileDoubleCompressedTorcherino;
 import com.sci.torcherino.blocks.tiles.TileTorcherino;
 import com.sci.torcherino.command.CommandTorcherino;
 import com.sci.torcherino.datafix.TorcherinoDataFixers;
+import com.sci.torcherino.diagnostics.TorcherinoDiagnostics;
 import net.minecraft.init.Blocks;
 import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.common.config.Property;
@@ -43,7 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class Torcherino {
     public static final String MOD_ID = "torcherino";
     public static final String MOD_NAME = "Torcherino";
-    public static final String VERSION = "8.0.0-alpha.11";
+    public static final String VERSION = "8.0.0-alpha.12";
 
     public static boolean logPlacement;
     public static boolean overPoweredRecipe;
@@ -59,6 +60,10 @@ public class Torcherino {
     public static int slowTargetMillis;
     public static int slowManagerMillis;
     public static int slowLogCooldownSeconds;
+    public static boolean separateLogEnabled;
+    public static int separateLogIntervalSeconds;
+    public static int separateLogMaxSizeMb;
+    public static int separateLogBackups;
     public static Configuration config;
     public static final Map<UUID, Boolean> keyStates =
         new ConcurrentHashMap<UUID, Boolean>();
@@ -67,6 +72,7 @@ public class Torcherino {
 
     private static String[] blacklistedBlocks;
     private static String[] blacklistedTiles;
+    private static File diagnosticsLogDirectory;
 
     @Mod.Instance(MOD_ID)
     public static Torcherino instance;
@@ -86,6 +92,10 @@ public class Torcherino {
     public void preInit(FMLPreInitializationEvent event) {
         logger = event.getModLog();
         network = NetworkRegistry.INSTANCE.newSimpleChannel(MOD_NAME);
+        diagnosticsLogDirectory = new File(
+            event.getModConfigurationDirectory().getParentFile(),
+            "logs"
+        );
 
         File folder = new File(event.getModConfigurationDirectory(), "sci4me");
         if (!folder.exists() && !folder.mkdirs()) {
@@ -133,11 +143,16 @@ public class Torcherino {
 
     @Mod.EventHandler
     public void serverStarting(FMLServerStartingEvent event) {
+        TorcherinoDiagnostics.start(
+            diagnosticsLogDirectory,
+            event.getServer()
+        );
         event.registerServerCommand(new CommandTorcherino());
     }
 
     @Mod.EventHandler
     public void serverStopping(FMLServerStoppingEvent event) {
+        TorcherinoDiagnostics.stop();
         keyStates.clear();
         AccelerationService.shutdown();
     }
@@ -249,6 +264,36 @@ public class Torcherino {
                 1,
                 86_400,
                 "Minimum time between warnings for the same target."
+            );
+            separateLogEnabled = config.getBoolean(
+                "separateLogEnabled",
+                "diagnostics",
+                true,
+                "Write low-overhead JSON diagnostics to logs/torcherino-performance.log."
+            );
+            separateLogIntervalSeconds = config.getInt(
+                "separateLogIntervalSeconds",
+                "diagnostics",
+                60,
+                10,
+                3600,
+                "Wall-clock seconds between automatic diagnostics summaries."
+            );
+            separateLogMaxSizeMb = config.getInt(
+                "separateLogMaxSizeMb",
+                "diagnostics",
+                16,
+                1,
+                1024,
+                "Maximum size of the active Torcherino diagnostics log."
+            );
+            separateLogBackups = config.getInt(
+                "separateLogBackups",
+                "diagnostics",
+                4,
+                0,
+                20,
+                "Number of rotated Torcherino diagnostics logs to retain."
             );
             blacklistedBlocks = config.getStringList(
                 "blacklistedBlocks",

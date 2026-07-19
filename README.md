@@ -63,6 +63,16 @@ behavior is not folded into virtual ticks.
 - `/torcherino profile start`
 - `/torcherino profile status`
 - `/torcherino profile stop`
+- `/torcherino log status`
+- `/torcherino log snapshot`
+- `/torcherino log flush`
+- `/torcherino log mark <message>`
+
+The dedicated `logs/torcherino-performance.log` contains one JSON object per
+line with startup environment, adapter signatures, periodic acceleration
+summaries, slow events, and manual profiler snapshots. It is enabled by
+default, rotates at 16 MB, retains four backups, and does not enable the
+detailed profiler. See [the diagnostics log guide](docs/diagnostics-log.md).
 
 Configuration remains at `config/sci4me/Torcherino.cfg`. New defaults are
 `strictExecution=true`, `overlapMode=LEGACY_SUM`, `asyncPlanner=true`,

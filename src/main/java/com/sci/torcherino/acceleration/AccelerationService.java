@@ -72,6 +72,31 @@ public final class AccelerationService {
         return lines;
     }
 
+    public static List<AccelerationMetricsSnapshot>
+        drainDiagnosticSnapshots() {
+        List<AccelerationMetricsSnapshot> snapshots =
+            new ArrayList<AccelerationMetricsSnapshot>();
+        for (WorldAccelerationManager manager : MANAGERS.values()) {
+            snapshots.add(manager.drainDiagnosticSnapshot());
+        }
+        Collections.sort(
+            snapshots,
+            new java.util.Comparator<AccelerationMetricsSnapshot>() {
+                @Override
+                public int compare(
+                    AccelerationMetricsSnapshot left,
+                    AccelerationMetricsSnapshot right
+                ) {
+                    return Integer.compare(
+                        left.getDimension(),
+                        right.getDimension()
+                    );
+                }
+            }
+        );
+        return snapshots;
+    }
+
     public static void shutdown() {
         for (WorldAccelerationManager manager : MANAGERS.values()) {
             manager.close();

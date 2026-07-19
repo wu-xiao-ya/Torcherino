@@ -5,6 +5,7 @@ import com.sci.torcherino.acceleration.AccelerationService;
 import com.sci.torcherino.acceleration.AdapterRegistry;
 import com.sci.torcherino.acceleration.AdapterReport;
 import com.sci.torcherino.api.AdapterClassification;
+import com.sci.torcherino.diagnostics.TorcherinoDiagnostics;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.CommandException;
 import net.minecraft.command.ICommandSender;
@@ -26,7 +27,8 @@ public final class CommandTorcherino extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/torcherino <adapters|plan|profile start|stop|status>";
+        return "/torcherino <adapters|plan|profile start|stop|status"
+            + "|log status|snapshot|flush|mark>";
     }
 
     @Override
@@ -53,6 +55,10 @@ public final class CommandTorcherino extends CommandBase {
             profile(sender, args);
             return;
         }
+        if ("log".equalsIgnoreCase(args[0])) {
+            diagnosticsLog(sender, args);
+            return;
+        }
         throw new CommandException(getUsage(sender));
     }
 
@@ -64,10 +70,25 @@ public final class CommandTorcherino extends CommandBase {
         @Nullable BlockPos targetPos
     ) {
         if (args.length == 1) {
-            return getListOfStringsMatchingLastWord(args, "adapters", "plan", "profile");
+            return getListOfStringsMatchingLastWord(
+                args,
+                "adapters",
+                "plan",
+                "profile",
+                "log"
+            );
         }
         if (args.length == 2 && "profile".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "start", "stop", "status");
+        }
+        if (args.length == 2 && "log".equalsIgnoreCase(args[0])) {
+            return getListOfStringsMatchingLastWord(
+                args,
+                "status",
+                "snapshot",
+                "flush",
+                "mark"
+            );
         }
         return Collections.emptyList();
     }
@@ -128,6 +149,10 @@ public final class CommandTorcherino extends CommandBase {
         }
         if ("stop".equalsIgnoreCase(args[1])) {
             profiler.stop();
+            TorcherinoDiagnostics.recordProfileSnapshot(
+                "manual-stop",
+                profiler.snapshot(50)
+            );
             send(sender, "Torcherino profiler stopped");
             return;
         }
@@ -139,6 +164,78 @@ public final class CommandTorcherino extends CommandBase {
             return;
         }
         throw new CommandException("/torcherino profile <start|stop|status>");
+    }
+
+    private static void diagnosticsLog(
+        ICommandSender sender,
+        String[] args
+    ) throws CommandException {
+        if (args.length < 2) {
+            throw new CommandException(
+                "/torcherino log <status|snapshot|flush|mark>"
+            );
+        }
+        if ("status".equalsIgnoreCase(args[1])) {
+            String failure = TorcherinoDiagnostics.getFailure();
+            send(
+                sender,
+                "Separate log "
+                    + (TorcherinoDiagnostics.isEnabled()
+                        ? "enabled"
+                        : "disabled")
+                    + " interval="
+                    + TorcherinoDiagnostics.getIntervalSeconds()
+                    + "s path="
+                    + TorcherinoDiagnostics.getPath()
+                    + (failure == null ? "" : " failure=" + failure)
+            );
+            return;
+        }
+        if ("snapshot".equalsIgnoreCase(args[1])) {
+            send(
+                sender,
+                TorcherinoDiagnostics.snapshot("manual-command")
+                    ? "Torcherino diagnostics snapshot written"
+                    : "Torcherino separate log is not available"
+            );
+            return;
+        }
+        if ("flush".equalsIgnoreCase(args[1])) {
+            send(
+                sender,
+                TorcherinoDiagnostics.flush()
+                    ? "Torcherino diagnostics log flushed"
+                    : "Torcherino separate log is not available"
+            );
+            return;
+        }
+        if ("mark".equalsIgnoreCase(args[1])) {
+            if (args.length < 3) {
+                throw new CommandException(
+                    "/torcherino log mark <message>"
+                );
+            }
+            StringBuilder message = new StringBuilder();
+            for (int index = 2; index < args.length; index++) {
+                if (message.length() > 0) {
+                    message.append(' ');
+                }
+                message.append(args[index]);
+            }
+            send(
+                sender,
+                TorcherinoDiagnostics.mark(
+                    sender.getName(),
+                    message.toString()
+                )
+                    ? "Torcherino diagnostics marker written"
+                    : "Torcherino separate log is not available"
+            );
+            return;
+        }
+        throw new CommandException(
+            "/torcherino log <status|snapshot|flush|mark>"
+        );
     }
 
     private static void send(ICommandSender sender, String message) {

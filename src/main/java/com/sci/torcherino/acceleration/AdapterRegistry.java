@@ -350,6 +350,14 @@ public final class AdapterRegistry {
             return adapterId;
         }
 
+        AdapterClassification getClassification() {
+            return classification;
+        }
+
+        int getMinimumBatchTicks() {
+            return minimumBatchTicks;
+        }
+
         private AdapterDispatch dispatch(AdvanceResult result) {
             if (cachedResult == result && cachedDispatch != null) {
                 return cachedDispatch;

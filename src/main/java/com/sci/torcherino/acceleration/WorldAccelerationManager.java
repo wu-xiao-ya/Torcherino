@@ -6,6 +6,7 @@ import com.sci.torcherino.api.AccelerationContext;
 import com.sci.torcherino.api.AdapterClassification;
 import com.sci.torcherino.api.AdvanceResult;
 import com.sci.torcherino.blocks.tiles.TileTorcherino;
+import com.sci.torcherino.diagnostics.TorcherinoDiagnostics;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntMaps;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
@@ -22,6 +23,12 @@ import net.minecraft.world.WorldServer;
 import net.minecraftforge.fluids.BlockFluidBase;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.function.BooleanSupplier;
 
@@ -51,6 +58,19 @@ public final class WorldAccelerationManager {
     private long appliedPlanRevision;
     private long discoveryBatches;
     private long discoveryScans;
+    private long diagnosticManagerTicks;
+    private long diagnosticManagerNanos;
+    private long diagnosticManagerMaxNanos;
+    private long diagnosticTargetVisits;
+    private long diagnosticRequestedVirtualTicks;
+    private long diagnosticConsumedVirtualTicks;
+    private long diagnosticFallbackTicks;
+    private long diagnosticSkippedTicks;
+    private long diagnosticRandomBlockTicks;
+    private long diagnosticExactBatchCalls;
+    private long diagnosticExactFastLoopCalls;
+    private long diagnosticLegacyCalls;
+    private long diagnosticBlacklistedCalls;
     private boolean ticking;
 
     WorldAccelerationManager(long managerId, WorldServer world) {
@@ -125,12 +145,24 @@ public final class WorldAccelerationManager {
         }
 
         long elapsed = System.nanoTime() - managerStart;
+        diagnosticManagerTicks++;
+        diagnosticManagerNanos += elapsed;
+        diagnosticManagerMaxNanos = Math.max(
+            diagnosticManagerMaxNanos,
+            elapsed
+        );
         if (elapsed >= Torcherino.slowManagerMillis * 1_000_000L) {
             Torcherino.logger.warn(
                 "Torcherino dimension {} used {} ms for {} covered positions",
                 world.provider.getDimension(),
                 elapsed / 1_000_000.0D,
                 coverage.size()
+            );
+            TorcherinoDiagnostics.recordSlowManager(
+                world.provider.getDimension(),
+                elapsed,
+                coverage.size(),
+                discoveredTargetCount
             );
         }
     }
@@ -173,6 +205,121 @@ public final class WorldAccelerationManager {
 
     public int getDiscoverySlices() {
         return discoveryWheel.getSlices();
+    }
+
+    AccelerationMetricsSnapshot drainDiagnosticSnapshot() {
+        List<AccelerationRouteSnapshot> activeRoutes =
+            buildDiagnosticRoutes();
+        AccelerationMetricsSnapshot snapshot =
+            new AccelerationMetricsSnapshot(
+                world.provider.getDimension(),
+                torches.size(),
+                coverage.size(),
+                discoveredTargetCount,
+                revision,
+                appliedPlanRevision,
+                discoveryBatches,
+                discoveryScans,
+                diagnosticManagerTicks,
+                diagnosticManagerNanos,
+                diagnosticManagerMaxNanos,
+                diagnosticTargetVisits,
+                diagnosticRequestedVirtualTicks,
+                diagnosticConsumedVirtualTicks,
+                diagnosticFallbackTicks,
+                diagnosticSkippedTicks,
+                diagnosticRandomBlockTicks,
+                diagnosticExactBatchCalls,
+                diagnosticExactFastLoopCalls,
+                diagnosticLegacyCalls,
+                diagnosticBlacklistedCalls,
+                activeRoutes
+            );
+        diagnosticManagerTicks = 0L;
+        diagnosticManagerNanos = 0L;
+        diagnosticManagerMaxNanos = 0L;
+        diagnosticTargetVisits = 0L;
+        diagnosticRequestedVirtualTicks = 0L;
+        diagnosticConsumedVirtualTicks = 0L;
+        diagnosticFallbackTicks = 0L;
+        diagnosticSkippedTicks = 0L;
+        diagnosticRandomBlockTicks = 0L;
+        diagnosticExactBatchCalls = 0L;
+        diagnosticExactFastLoopCalls = 0L;
+        diagnosticLegacyCalls = 0L;
+        diagnosticBlacklistedCalls = 0L;
+        return snapshot;
+    }
+
+    private List<AccelerationRouteSnapshot> buildDiagnosticRoutes() {
+        Map<String, MutableRouteSnapshot> grouped =
+            new HashMap<String, MutableRouteSnapshot>();
+        for (int index = 0; index < discoveredTargetCount; index++) {
+            TargetExecutionContext context = discoveredTargets[index];
+            int multiplier = discoveredMultipliers[index];
+            boolean randomOnly = context.randomTick
+                && context.diagnosticTileClass == null;
+            String tileClass = randomOnly
+                ? context.block.getClass().getName()
+                : context.diagnosticTileClass == null
+                    ? "unknown"
+                    : context.diagnosticTileClass;
+            String adapterId = randomOnly
+                ? "random-block"
+                : context.diagnosticAdapterId == null
+                    ? "unresolved"
+                    : context.diagnosticAdapterId;
+            AdapterClassification classification =
+                context.diagnosticClassification == null
+                    ? AdapterClassification.LEGACY_FALLBACK
+                    : context.diagnosticClassification;
+            if (classification != AdapterClassification.BLACKLIST
+                && multiplier < context.diagnosticMinimumBatchTicks) {
+                classification = AdapterClassification.LEGACY_FALLBACK;
+            }
+            String key = tileClass
+                + '\u0000'
+                + adapterId
+                + '\u0000'
+                + classification.name();
+            MutableRouteSnapshot value = grouped.get(key);
+            if (value == null) {
+                value = new MutableRouteSnapshot(
+                    tileClass,
+                    adapterId,
+                    classification
+                );
+                grouped.put(key, value);
+            }
+            value.add(multiplier);
+        }
+
+        List<AccelerationRouteSnapshot> result =
+            new ArrayList<AccelerationRouteSnapshot>(grouped.size());
+        for (MutableRouteSnapshot value : grouped.values()) {
+            result.add(value.snapshot());
+        }
+        Collections.sort(
+            result,
+            new Comparator<AccelerationRouteSnapshot>() {
+                @Override
+                public int compare(
+                    AccelerationRouteSnapshot left,
+                    AccelerationRouteSnapshot right
+                ) {
+                    int byClass = left.getTileClass().compareTo(
+                        right.getTileClass()
+                    );
+                    if (byClass != 0) {
+                        return byClass;
+                    }
+                    return left.getAdapterId().compareTo(
+                        right.getAdapterId()
+                    );
+                }
+            }
+        );
+        return result;
     }
 
     void close() {
@@ -369,6 +516,7 @@ public final class WorldAccelerationManager {
         AccelerationProfiler profiler,
         boolean profiling
     ) {
+        diagnosticTargetVisits++;
         long packedPos = cachedContext.packedPos;
         BlockPos pos = cachedContext.pos;
         long scanStart = profiling ? System.nanoTime() : 0L;
@@ -436,7 +584,8 @@ public final class WorldAccelerationManager {
         long targetStart = System.nanoTime();
         try {
             if (randomTick) {
-                tickRandomBlock(pos, state, block, multiplier);
+                diagnosticRandomBlockTicks +=
+                    tickRandomBlock(pos, state, block, multiplier);
                 state = world.getBlockState(pos);
                 cachedContext.updateBlockState(state);
                 block = cachedContext.block;
@@ -466,11 +615,13 @@ public final class WorldAccelerationManager {
                 }
             }
 
+            diagnosticRequestedVirtualTicks += multiplier;
             long adapterStart = profiling ? System.nanoTime() : 0L;
             AdapterRegistry registry = AdapterRegistry.getInstance();
             AdapterRegistry.PreparedRoute route =
                 cachedContext.prepareRoute(registry, tile);
             if (route.usesLegacyBelow(multiplier)) {
+                diagnosticLegacyCalls++;
                 final TileEntity expectedTile = tile;
                 int fallbackTicks = runFallbackTicks(
                     tile,
@@ -494,6 +645,10 @@ public final class WorldAccelerationManager {
                         System.nanoTime() - adapterStart
                     );
                 }
+                diagnosticConsumedVirtualTicks += fallbackTicks;
+                diagnosticFallbackTicks += fallbackTicks;
+                diagnosticSkippedTicks +=
+                    Math.max(0, multiplier - fallbackTicks);
                 return !tile.isInvalid()
                     && world.isBlockLoaded(pos, false)
                     && world.getTileEntity(pos) == expectedTile;
@@ -505,6 +660,8 @@ public final class WorldAccelerationManager {
                 route
             );
             if (dispatch.isBlacklisted()) {
+                diagnosticBlacklistedCalls++;
+                diagnosticSkippedTicks += multiplier;
                 if (profiling) {
                     profiler.recordBlacklisted(
                         tile.getClass().getName(),
@@ -517,6 +674,9 @@ public final class WorldAccelerationManager {
             }
 
             AdvanceResult result = dispatch.getResult();
+            recordDiagnosticClassification(
+                dispatch.getClassification()
+            );
             int fallbackTicks = 0;
             int requestedFallbackTicks = result.getFallbackTicks();
             if (!result.isInvalidated() && requestedFallbackTicks > 0) {
@@ -534,6 +694,12 @@ public final class WorldAccelerationManager {
                     }
                 );
             }
+            int executedTicks =
+                result.getConsumedTicks() + fallbackTicks;
+            diagnosticConsumedVirtualTicks += executedTicks;
+            diagnosticFallbackTicks += fallbackTicks;
+            diagnosticSkippedTicks +=
+                Math.max(0, multiplier - executedTicks);
             if (result.isSyncRequired() && !tile.isInvalid()) {
                 tile.markDirty();
             }
@@ -609,13 +775,20 @@ public final class WorldAccelerationManager {
         return true;
     }
 
-    private void tickRandomBlock(BlockPos pos, IBlockState state, Block block, int multiplier) {
-        for (int i = 0; i < multiplier; i++) {
+    private int tickRandomBlock(
+        BlockPos pos,
+        IBlockState state,
+        Block block,
+        int multiplier
+    ) {
+        int executed = 0;
+        for (; executed < multiplier; executed++) {
             if (!world.isBlockLoaded(pos, false) || world.getBlockState(pos) != state) {
                 break;
             }
             block.updateTick(world, pos, state, random);
         }
+        return executed;
     }
 
     static int runFallbackTicks(
@@ -651,6 +824,31 @@ public final class WorldAccelerationManager {
             pos,
             elapsed / 1_000_000.0D
         );
+        TorcherinoDiagnostics.recordSlowTarget(
+            world.provider.getDimension(),
+            packedPos,
+            elapsed
+        );
+    }
+
+    private void recordDiagnosticClassification(
+        AdapterClassification classification
+    ) {
+        if (classification == AdapterClassification.EXACT_BATCH) {
+            diagnosticExactBatchCalls++;
+        } else if (
+            classification == AdapterClassification.EXACT_FAST_LOOP
+        ) {
+            diagnosticExactFastLoopCalls++;
+        } else if (
+            classification == AdapterClassification.LEGACY_FALLBACK
+        ) {
+            diagnosticLegacyCalls++;
+        } else if (
+            classification == AdapterClassification.BLACKLIST
+        ) {
+            diagnosticBlacklistedCalls++;
+        }
     }
 
     private static void recordSkipped(
@@ -785,6 +983,10 @@ public final class WorldAccelerationManager {
         private int discoveredIndex = -1;
         private TileEntity routeTile;
         private AdapterRegistry.PreparedRoute route;
+        private String diagnosticTileClass;
+        private String diagnosticAdapterId;
+        private AdapterClassification diagnosticClassification;
+        private int diagnosticMinimumBatchTicks = 1;
 
         private TargetExecutionContext(WorldServer world, long packedPos) {
             this.packedPos = packedPos;
@@ -820,6 +1022,11 @@ public final class WorldAccelerationManager {
             }
             AdapterRegistry.PreparedRoute prepared =
                 registry.prepare(tile, previous);
+            diagnosticTileClass = tile.getClass().getName();
+            diagnosticAdapterId = prepared.getAdapterId();
+            diagnosticClassification = prepared.getClassification();
+            diagnosticMinimumBatchTicks =
+                prepared.getMinimumBatchTicks();
             if (prepared.isReusable()) {
                 routeTile = tile;
                 route = prepared;
@@ -833,6 +1040,49 @@ public final class WorldAccelerationManager {
         private void clearRoute() {
             routeTile = null;
             route = null;
+            diagnosticTileClass = null;
+            diagnosticAdapterId = null;
+            diagnosticClassification = null;
+            diagnosticMinimumBatchTicks = 1;
+        }
+    }
+
+    private static final class MutableRouteSnapshot {
+        private final String tileClass;
+        private final String adapterId;
+        private final AdapterClassification classification;
+        private int targets;
+        private long summedMultiplier;
+        private int minimumMultiplier = Integer.MAX_VALUE;
+        private int maximumMultiplier = Integer.MIN_VALUE;
+
+        private MutableRouteSnapshot(
+            String tileClass,
+            String adapterId,
+            AdapterClassification classification
+        ) {
+            this.tileClass = tileClass;
+            this.adapterId = adapterId;
+            this.classification = classification;
+        }
+
+        private void add(int multiplier) {
+            targets++;
+            summedMultiplier += multiplier;
+            minimumMultiplier = Math.min(minimumMultiplier, multiplier);
+            maximumMultiplier = Math.max(maximumMultiplier, multiplier);
+        }
+
+        private AccelerationRouteSnapshot snapshot() {
+            return new AccelerationRouteSnapshot(
+                tileClass,
+                adapterId,
+                classification,
+                targets,
+                summedMultiplier,
+                minimumMultiplier,
+                maximumMultiplier
+            );
         }
     }
 }
